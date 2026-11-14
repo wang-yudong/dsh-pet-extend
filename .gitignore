@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志与临时产物
+*.log
+*.tmp
+test/_*
+
+# 模型权重默认随仓库提供（约 32MB）；
+# 若不想提交，取消下面两行注释，clone 后执行 npm run install:models。
+# models/**/*.onnx
+# models/**/*.bin

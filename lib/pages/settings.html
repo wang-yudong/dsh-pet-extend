@@ -1,0 +1,1219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音唤醒设置 · dsh-pet-extend</title>
+<style>
+  /* 与 dsh-pet 设置分区同一套：优先用宿主注入的 --dsw-* 主题令牌，缺失时回落到浅色值。 */
+  :root {
+    color-scheme: light dark;
+    --bg-base: var(--dsw-alias-bg-base, #f9fafb);
+    --bg-layer-1: var(--dsw-alias-bg-layer-1, #fff);
+    --bg-layer-2: var(--dsw-alias-bg-layer-2, #fff);
+    --border-l2: var(--dsw-alias-border-l2, #0000001a);
+    --label-primary: var(--dsw-alias-label-primary, #0f1115);
+    --label-secondary: var(--dsw-alias-label-secondary, #61666b);
+    --label-tertiary: var(--dsw-alias-label-tertiary, #81858c);
+    --accent: var(--dsw-alias-state-business-primary, #3b82f6);
+    --btn-fill: var(--dsw-alias-button-info-fill, #3b82f6);
+    --btn-hover: var(--dsw-alias-button-info-hover, #2f6fe0);
+    --success: var(--dsw-alias-state-success-primary, #15803d);
+    --error: var(--dsw-alias-state-error-primary, #ef4444);
+    --hover: var(--dsw-alias-interactive-bg-hover, #2631480f);
+    --active: var(--dsw-alias-interactive-bg-active, #2631481a);
+    --radius: var(--dsw-radius-md, 12px);
+    --radius-sm: var(--dsw-radius-sm, 8px);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--label-primary);
+    font: 13px/20px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", sans-serif;
+    background: var(--bg-base);
+  }
+  .shell { max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  h1 { margin: 0; font-size: 16px; font-weight: 500; line-height: 24px; }
+  .sub { color: var(--label-tertiary); margin: 2px 0 0; font-size: 12px; }
+  .badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border: 1px solid var(--border-l2); border-radius: 999px; font-size: 12px; color: var(--label-secondary); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--label-tertiary); }
+  .dot.on { background: var(--success); } .dot.warn { background: #f59e0b; } .dot.off { background: var(--error); }
+  .grid { display: flex; flex-direction: column; gap: 12px; }
+  .card { border: 1px solid var(--border-l2); border-radius: var(--radius); padding: 12px 14px;
+    background: var(--bg-layer-2); display: flex; flex-direction: column; gap: 2px; }
+  .card h2 { margin: 0 0 6px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .step { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px;
+    border-radius: 6px; background: var(--active); color: var(--label-secondary); font-size: 11px; font-weight: 600; }
+  .hint { color: var(--label-tertiary); font-size: 12px; line-height: 18px; margin: 2px 0 8px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .row.between { justify-content: space-between; }
+  label { color: var(--label-secondary); font-size: 12px; }
+  input[type="text"], input[type="number"], textarea {
+    width: 100%; min-height: 28px; padding: 4px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-l2); background: var(--bg-layer-1); color: var(--label-primary);
+    font: inherit; outline: none;
+  }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 66px; line-height: 18px; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  input[type="number"] { width: 110px; }
+  input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  button { border: 1px solid var(--border-l2); border-radius: var(--radius-sm); padding: 4px 14px; cursor: pointer;
+    color: var(--label-primary); background: transparent; font: inherit; font-size: 12px; line-height: 20px;
+    transition: background .15s; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--btn-fill); border-color: var(--btn-fill); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--btn-hover); border-color: var(--btn-hover); }
+  button.ghost { background: transparent; }
+  .kv { display: grid; grid-template-columns: 96px 1fr; gap: 6px 12px; font-size: 12px; }
+  .kv dt { color: var(--label-tertiary); } .kv dd { margin: 0; word-break: break-all; color: var(--label-primary); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--border-l2); color: var(--label-secondary); }
+  .pill.ok { color: var(--success); border-color: var(--success); }
+  .pill.bad { color: var(--error); border-color: var(--error); }
+  .bar { height: 6px; border-radius: 99px; background: var(--active); overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width .12s linear; }
+  pre { margin: 8px 0 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-base);
+    border: 1px solid var(--border-l2); color: var(--label-secondary); font: 12px/18px ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all; max-height: 130px; overflow: auto; }
+  .msg { margin-top: 6px; font-size: 12px; min-height: 18px; color: var(--label-tertiary); }
+  .msg.err { color: var(--error); } .msg.ok { color: var(--success); }
+  a { color: var(--accent); }
+  footer { color: var(--label-tertiary); font-size: 12px; text-align: center; margin-top: 20px; }
+  /* 嵌入 DSH 设置分区时：去掉独立页背景与留白，让卡片描边透出宿主底色。 */
+  body.embed { background: transparent; min-height: 0; }
+  body.embed .shell { max-width: none; padding: 0 0 16px; }
+  body.embed header { margin-bottom: 12px; }
+  body.embed .card { background: transparent; }
+  body.embed footer { display: none; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div>
+      <h1>语音唤醒设置</h1>
+      <p class="sub">喊一声「大肥鱼」，只有你的声音能唤醒桌宠对话 · 本地离线运行</p>
+    </div>
+    <div class="badge"><span class="dot" id="dot"></span><span id="badgeText">加载中…</span></div>
+  </header>
+
+  <div class="grid">
+    <section class="card wide">
+      <h2><span class="step">●</span>运行状态</h2>
+      <p class="hint">模型、依赖、声纹与引擎的实时状态；每 3 秒自动刷新。对着麦克风说话时，「麦克风电平」条应明显起伏（这是 KWS 实际收到的音频）。</p>
+      <dl class="kv">
+        <dt>KWS 引擎</dt><dd id="engineState">—</dd>
+        <dt>模型文件</dt><dd id="modelState">—</dd>
+        <dt>声纹</dt><dd id="voiceState">—</dd>
+        <dt>唤醒词</dt><dd id="wordState">—</dd>
+        <dt>麦克风电平</dt><dd>
+          <div class="bar" style="margin-top:0"><i id="micBar"></i></div>
+          <span class="hint" id="micPeak" style="margin:2px 0 0;display:inline-block">—</span>
+        </dd>
+        <dt>最近一次</dt><dd id="lastState">—</dd>
+        <dt>诊断</dt><dd><a href="#" id="statusLink" style="color:var(--accent)">查看 /api/kws/status</a><div class="msg" id="diagText"></div></dd>
+      </dl>
+      <div class="row">
+        <button class="ghost" id="retryBtn">重新初始化引擎</button>
+        <button class="ghost" id="installBtn">重新安装模型</button>
+        <span class="pill" id="installState">模型已随插件提供</span>
+      </div>
+      <p class="hint" style="margin:6px 0 0">重新初始化会重新读取设置、词表和声纹并重建语音引擎；它不会重载插件代码，修改插件源码后需要重启 DSH。</p>
+      <div class="msg" id="globalMsg"></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">1</span>录入声纹</h2>
+      <p class="hint">开启语音唤醒前必须录入。点击后请连续清晰地念 3 秒唤醒词（可重复录入 3 次提升准确率）。本页内嵌时，授权与录音都走 DSH 主窗口；若权限被拒绝，点「申请麦克风权限」重试。</p>
+      <div class="row">
+        <button class="primary" id="enrollBtn">开始录入（3 秒）</button>
+        <button class="ghost" id="clearBtn">清除声纹</button>
+      </div>
+      <div class="row">
+        <button class="ghost" id="micBtn">申请麦克风权限</button>
+        <span class="pill" id="micState">正在检查麦克风权限…</span>
+      </div>
+      <div class="bar"><i id="enrollBar"></i></div>
+      <div class="msg" id="enrollMsg">声纹数据只保存在本机，不会上传。</div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">试</span>声纹回放与唤醒测试</h2>
+      <p class="hint">下面逐条列出已录入的声纹，每条都能单独回放，用来对比录入时和实际喊的时候音色/音量是否一致（旧版录入只存了特征向量，需重新录入才有录音）。按住按钮念唤醒词，松开后走与正式监听完全相同的 KWS + 声纹链路，但不会真的打开对话；测完可回放「引擎刚才听到的声音」。</p>
+      <div id="voiceprintList" class="msg">读取中…</div>
+      <div class="row">
+        <button class="primary" id="holdTestBtn">按住录音测试唤醒</button>
+        <button class="ghost" id="replayTestBtn">回放刚才的录音</button>
+        <button class="ghost" id="replayListenBtn">回放最近监听</button>
+        <span class="pill" id="testState">待机</span>
+      </div>
+      <div class="bar"><i id="testBar"></i></div>
+      <div class="msg" id="testMsg">按住按钮念唤醒词，松开后显示是否检出、声纹分数、音频电平与是否激活。</div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">2</span>唤醒词</h2>
+      <p class="hint">默认「大肥鱼」。支持中文自定义，多个词用逗号或换行分隔；会自动转成模型需要的拼音 token。实测模型自带词表全是 4 字/叠词，2~3 字短词对语速和发音很敏感，喊了不触发时优先换成四字或叠词。</p>
+      <input type="text" id="wakeWords" placeholder="大肥鱼">
+      <details style="margin-top:10px">
+        <summary style="color:var(--label-tertiary);cursor:pointer;font-size:12px">高级：直接写 token 行（每行一条）</summary>
+        <textarea id="keywordLines" placeholder="d à f éi y ú :1.5 #0.3 @大肥鱼"></textarea>
+      </details>
+      <pre id="keywordPreview">—</pre>
+      <div class="row between" style="margin-top:12px">
+        <label>唤醒加成 <input type="number" id="keywordsScore" step="0.1" min="0" max="10"></label>
+        <label>触发阈值 <input type="number" id="keywordsThreshold" step="0.05" min="0" max="1"></label>
+      </div>
+      <p class="hint" style="margin:4px 0 0">默认 3 / 0.15，按真人发音实测；漏检多可把阈值降到 0.12，误触多可回调到 2.5 / 0.2。</p>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">3</span>启用与阈值</h2>
+      <p class="hint">未录入声纹时开关不可用。声纹阈值越高越严格，唤醒冷却可避免重复打开对话。</p>
+      <div class="row between">
+        <div><strong>语音唤醒</strong><div class="hint" style="margin:2px 0 0" id="enableHint">需要先录入声纹</div></div>
+        <input type="checkbox" id="enabled" aria-label="语音唤醒">
+      </div>
+      <div class="row between" style="margin-top:10px"><label>声纹阈值 <span id="thresholdValue">0.50</span></label></div>
+      <input type="range" id="speakerThreshold" min="0.2" max="0.9" step="0.01">
+      <div class="row between" style="margin-top:14px">
+        <label>唤醒冷却 <input type="number" id="cooldownMs" step="100" min="0" max="60000"> ms</label>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button class="primary" id="saveBtn">保存设置</button>
+        <span class="msg" id="saveMsg"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">★</span>唤醒反应</h2>
+      <p class="hint">命中唤醒词且声纹通过后，让 dsh-pet 桌宠播放联动动画、弹气泡，并用 dsh-pet 设定的音色朗读一句回应；合成失败时不朗读（保持静音，不改用其它音色）。可关掉只保留打开对话。</p>
+      <div class="row between">
+        <div><strong>启用唤醒反应</strong><div class="hint" style="margin:2px 0 0">关闭则只打开对话，不播放动画/语音</div></div>
+        <input type="checkbox" id="reactEnabled" aria-label="启用唤醒反应">
+      </div>
+      <div class="row between" style="margin-top:14px">
+        <label>联动动画 <input type="checkbox" id="reactAnim" checked></label>
+        <label>语音朗读 <input type="checkbox" id="reactSpeak" checked></label>
+      </div>
+      <div class="row between" style="margin-top:12px">
+        <label>气泡停留 <input type="number" id="reactDuration" step="500" min="1000" max="60000"> ms</label>
+      </div>
+      <label class="hint" style="margin-top:14px;display:block">回应文案（每行一句，触发时随机选一条；留空则用默认「我在 / 你好」）</label>
+      <textarea id="reactText" rows="3" placeholder="我在 / 你好" maxlength="500"></textarea>
+      <label class="hint" style="margin-top:10px;display:block">指定桌宠 id（留空=自动取第一只；多宠物时再用）</label>
+      <input type="text" id="reactPetId" placeholder="自动发现" maxlength="40">
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="reactTestBtn">测试反应</button>
+        <span class="msg" id="reactMsg"></span>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <h2><span class="step">4</span>使用方式</h2>
+      <p class="hint">本页位于 DSH 设置 →「桌宠扩展设置」。保存并启用后，DSH 客户端会请求麦克风权限；首次使用若被拦截，点击或按键一下即可自动重试。唤醒成功后会打开 dsh-pet 原本的「桌宠对话」标签。</p>
+      <div class="row">
+        <span class="pill">KWS：sherpa-onnx Zipformer int8</span>
+        <span class="pill">声纹：3D-Speaker CAM++ 中文</span>
+        <span class="pill">音频：16kHz 单声道，仅本机 HTTP</span>
+      </div>
+    </section>
+  </div>
+  <footer>dsh-pet-extend · 语音唤醒与声纹数据均在本机处理</footer>
+</div>
+<script>
+(function () {
+  'use strict';
+  if (new URLSearchParams(location.search).get('embed') === '1') document.body.classList.add('embed');
+  // iframe 不继承宿主 CSS 变量：同源时把 dsh-pet 用的 --dsw-* 主题令牌抄进来，深/浅色自动跟随。
+  try {
+    if (window.parent && window.parent !== window) {
+      var pcs = window.parent.getComputedStyle(window.parent.document.documentElement);
+      ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-bg-layer-2', '--dsw-alias-border-l2',
+        '--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-label-tertiary',
+        '--dsw-alias-state-business-primary', '--dsw-alias-button-info-fill', '--dsw-alias-button-info-hover',
+        '--dsw-alias-state-success-primary', '--dsw-alias-state-error-primary',
+        '--dsw-alias-interactive-bg-hover', '--dsw-alias-interactive-bg-active',
+        '--dsw-radius-sm', '--dsw-radius-md'].forEach(function (name) {
+        var value = pcs.getPropertyValue(name);
+        if (value && value.trim()) document.documentElement.style.setProperty(name, value.trim());
+      });
+    }
+  } catch (e) { /* 跨域或宿主未注入：保留 CSS 里的回退值 */ }
+  var at = location.pathname.lastIndexOf('/dsh-pet-extend');
+  var base = (at >= 0 ? location.pathname.slice(0, at) : '') + '/dsh-pet-extend/';
+  function api(path, params) {
+    var url = new URL(base + path, location.origin);
+    new URLSearchParams(location.search).forEach(function (value, key) {
+      if (!url.searchParams.has(key)) url.searchParams.set(key, value);
+    });
+    Object.entries(params || {}).forEach(function (entry) {
+      if (entry[1] !== undefined && entry[1] !== null) url.searchParams.set(entry[0], String(entry[1]));
+    });
+    return url.href;
+  }
+  function $(id) { return document.getElementById(id); }
+  function text(id, value) { var node = $(id); if (node) node.textContent = value; }
+  function message(id, value, kind) {
+    var node = $(id); if (!node) return;
+    node.textContent = value || '';
+    node.className = 'msg' + (kind ? ' ' + kind : '');
+  }
+  // 唤醒回应朗读：与正常触发同一套——优先 dsh-pet 的 /voice/speak（音色跟随其 voiceName + 缓存），
+  // 失败再退回系统 Web Speech。测试按钮走这里，保证和真实唤醒体验一致。
+  var petBase = (at >= 0 ? location.pathname.slice(0, at) : '') + '/dsh-pet-7340';
+  var voiceCfgPromise = null;
+  function loadDshPetVoice() {
+    if (voiceCfgPromise) return voiceCfgPromise;
+    voiceCfgPromise = fetch(new URL(petBase + '/config', location.origin).href, { cache: 'no-store' })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (cfg) {
+        var main = (cfg && cfg.main) || {};
+        var volume = Number(main.voiceVolume);
+        return {
+          voiceName: typeof main.voiceName === 'string' ? main.voiceName : '',
+          volume: isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1,
+        };
+      })
+      .catch(function () { return { voiceName: '', volume: 1 }; });
+    return voiceCfgPromise;
+  }
+  function playDshPetVoice(value, cfg) {
+    if (typeof Audio !== 'function' || typeof URL.createObjectURL !== 'function') return Promise.resolve(false);
+    return fetch(new URL(petBase + '/voice/speak', location.origin).href, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: value, ...(cfg.voiceName ? { voice: cfg.voiceName } : {}) }),
+    }).then(function (res) {
+      var type = (res.headers && typeof res.headers.get === 'function' && res.headers.get('content-type')) || '';
+      if (!res.ok || type.indexOf('audio') < 0) return false;
+      return res.blob().then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var audio = new Audio(url);
+        audio.volume = cfg.volume;
+        audio.onended = function () { URL.revokeObjectURL(url); };
+        audio.onerror = function () { URL.revokeObjectURL(url); };
+        return audio.play().then(function () { return true; }, function () { URL.revokeObjectURL(url); return false; });
+      });
+    }).catch(function () { return false; });
+  }
+  // 只用 dsh-pet 的音色；合成失败保持静音，不回退系统 Web Speech（避免音色不一致）。
+  function speakReaction(value) {
+    if (!value) return;
+    loadDshPetVoice().then(function (cfg) {
+      playDshPetVoice(value, cfg);
+    });
+  }
+  function request(path, options) {
+    options = options || {};
+    var init = { method: options.method || 'GET', cache: 'no-store' };
+    if (options.json !== undefined) {
+      init.headers = { 'content-type': 'application/json' };
+      init.body = JSON.stringify(options.json);
+    } else if (options.body !== undefined) {
+      init.headers = { 'content-type': 'application/octet-stream' };
+      init.body = options.body;
+    }
+    return fetch(api(path, options.params), init).then(function (res) {
+      return res.text().catch(function () { return ''; }).then(function (raw) {
+        try { return JSON.parse(raw.replace(/^\uFEFF+/, '')); }
+        catch (e) {
+          // DSH 的异常响应可能是纯文本；把内容带出来，别只显示「HTTP 400」。
+          return { ok: false, reason: 'HTTP ' + res.status, message: (raw || '').trim().slice(0, 300) };
+        }
+      });
+    });
+  }
+  function esc(value) {
+    return String(value === undefined || value === null ? '' : value).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  function pill(value, ok, label) {
+    return '<span class="pill ' + (ok ? 'ok' : 'bad') + '">' + (label || (ok ? '就绪' : '缺失')) + '</span> ' + esc(value);
+  }
+  var state = { loaded: false, saving: false };
+
+  function renderSettings(data) {
+    if (!data || !data.ok) { message('globalMsg', (data && data.reason) || '读取设置失败', 'err'); return; }
+    var s = data.settings || {};
+    state.loaded = true;
+    $('wakeWords').value = (s.wakeWords || []).join('，');
+    $('keywordLines').value = (s.keywordLines || []).join('\n');
+    $('keywordsScore').value = s.keywordsScore;
+    $('keywordsThreshold').value = s.keywordsThreshold;
+    $('speakerThreshold').value = s.speakerThreshold;
+    $('thresholdValue').textContent = Number(s.speakerThreshold).toFixed(2);
+    $('cooldownMs').value = s.cooldownMs;
+    $('reactEnabled').checked = s.reactEnabled !== false;
+    $('reactAnim').checked = s.reactAnim !== false;
+    $('reactSpeak').checked = s.reactSpeak !== false;
+    $('reactDuration').value = s.reactDuration || 8000;
+    $('reactText').value = s.reactText || '';
+    $('reactPetId').value = s.reactPetId || '';
+    var vp = data.voiceprint || {};
+    renderVoiceprintList(vp);
+    $('enabled').checked = Boolean(s.enabled);
+    $('enabled').disabled = !vp.present;
+    $('enableHint').textContent = vp.present
+      ? '已录入 ' + (vp.count || 0) + ' 次声纹，可以启用'
+      : '需要先录入声纹';
+    var kw = data.keywords || {};
+    $('keywordPreview').textContent = (kw.lines || []).join('\n') || '—';
+    if ((kw.errors || []).length) message('saveMsg', kw.errors.join('；'), 'err');
+  }
+
+  // 跳过原因是英文枚举，直接显示用户看不懂；映射成能直接行动的说明。
+  var SKIP_LABELS = {
+    cooldown: '冷却中（两次唤醒间隔小于设定值）',
+    'voiceprint-rejected': '声纹未通过',
+    'below-threshold': '声纹分数低于阈值',
+    'audio-too-short': '声纹片段太短',
+    'not-a-wake-word': '不在唤醒词白名单',
+    'session-not-found': '会话失效（已自动重建）',
+    'engine-not-ready': '引擎未就绪',
+    'engine-error': '引擎错误',
+    'bad-pcm': '音频格式异常',
+    'decode-error': '解码异常',
+    'no-keyword': '未识别到唤醒词',
+  };
+  function skipLabel(reason) {
+    return SKIP_LABELS[reason] || reason;
+  }
+
+  function renderStatus(data) {
+    if (!data || !data.ok) return;
+    // /api/kws/status 是扁平结构，/api/kws/settings 把状态嵌在 status 里。
+    var status = data.status || data;
+    var model = data.model || {};
+    var vp = data.voiceprint || {};
+    var state = status.state || '—';
+    var ready = state === 'ready';
+    var failed = state === 'error';
+    var disabled = state === 'disabled';
+    var listening = Boolean(status.readyToListen || (status.enabled && ready));
+    var dot = $('dot');
+    dot.className = 'dot ' + (listening && vp.present ? 'on' : (failed ? 'off' : 'warn'));
+    text('badgeText', listening && vp.present ? '正在聆听'
+      : (failed ? '引擎异常' : (disabled ? '未启用（先录入声纹）' : (ready ? '引擎就绪，等待启用' : '初始化中'))));
+    // disabled 只表示设置页还没打开开关，不能和模型/依赖缺失混为一谈。
+    var engine = ready ? pill(state, true, '就绪')
+      : failed ? pill(state, false, '异常')
+        : '<span class="pill">' + (disabled ? '未启用（正常：未录入声纹或未打开开关）' : esc(state) + ' · 初始化中') + '</span>';
+    $('engineState').innerHTML = engine +
+      (status.reason ? ' · ' + esc(status.reason) : '') + ' · 会话 ' + esc(status.sessions || 0);
+    var runtime = data.runtime || {};
+    var issues = [];
+    if (runtime.sherpa && !runtime.sherpa.ok) issues.push('推理依赖不可用：' + runtime.sherpa.error);
+    if (runtime.speakerModelPresent === false) issues.push('声纹模型路径未配置');
+    $('modelState').innerHTML = pill(
+      (model.kwsComplete ? 'KWS 已就绪' : 'KWS 缺失') + ' / ' + (model.speakerPresent ? '声纹模型已就绪' : '声纹模型缺失') +
+      ' · ' + (model.sizeMB || 0) + ' MB',
+      Boolean(model.complete)) +
+      (issues.length ? ' · <span class="pill bad">' + esc(issues.join('；')) + '</span>' : '');
+    $('voiceState').innerHTML = (vp.present
+      ? pill('已录入 ' + vp.count + ' 次 · 阈值 ' + vp.threshold, true, '就绪')
+      : '<span class="pill">未录入（需先录入声纹；麦克风异常时见下方提示）</span>') +
+      (vp.present && vp.samples && vp.samples.length
+        ? ' · <span class="pill">回放录音 ' +
+          vp.samples.filter(function (item) { return item.audioAvailable; }).length + '/' + vp.samples.length + '</span>'
+        : '') +
+      (vp.extractorError ? ' · <span class="pill bad">声纹引擎：' + esc(vp.extractorError) + '</span>' : '');
+    text('wordState', (status.wakeWords || []).join('、') || '—');
+    var last = status.lastDetection
+      ? '唤醒词「' + status.lastDetection.keyword + '」 · ' + new Date(status.lastDetection.at).toLocaleTimeString()
+      : '暂无唤醒记录';
+    if (status.lastVerification) {
+      last += ' · 声纹分数 ' + (Number(status.lastVerification.score) || 0).toFixed(3) +
+        (status.lastVerification.ok ? '（通过）' : '（拒绝：' + status.lastVerification.reason + '）');
+    }
+    text('lastState', last);
+    text('installState', model.install && model.install.running
+      ? '正在安装：' + model.install.phase : (model.install && model.install.error ? '安装失败：' + model.install.error : '模型已随插件提供'));
+    $('statusLink').href = api('api/kws/status');
+    var menu = data.menu || {};
+    var diag = [];
+    if (menu.lastEvent) {
+      diag.push('最近事件 ' + esc(menu.lastEvent.label) + ' · ' + new Date(menu.lastEvent.ts).toLocaleTimeString());
+    }
+    if (menu.lastOpenResult) {
+      diag.push('打开结果 ' + (menu.lastOpenResult.ok ? '成功' : '失败') + ' · ' +
+        esc(menu.lastOpenResult.method || menu.lastOpenResult.reason || '—') +
+        (menu.lastOpenResult.source ? ' · ' + esc(menu.lastOpenResult.source) : ''));
+    }
+    if (menu.lastError) diag.push('提示 ' + esc(menu.lastError));
+    if (menu.clientSeen === false) diag.push('客户端半侧未心跳');
+    // 采集状态：窗口隐藏时音频图可能被挂起，这里能看到 listening / restarting / 距上次心跳。
+    var client = status.client;
+    if (client && client.state) {
+      var cap = client.state + (client.sampleRate ? ' · ' + client.sampleRate + 'Hz' : '') +
+        (client.reason ? ' · ' + esc(client.reason) : '');
+      if (client.at) cap += ' · ' + Math.max(0, Math.round((Date.now() - client.at) / 1000)) + 's前';
+      diag.push('采集 ' + esc(cap));
+    }
+    // 引擎状态 + 检测/触发/拒绝计数：区分「没检测到」还是「检测到但被冷却/声纹拒绝」。
+    diag.push('引擎 ' + esc(status.state || '?') + (status.reason ? ' · ' + esc(status.reason) : ''));
+    if (status.boosts && status.boosts.length) {
+      diag.push('并行档位 ' + esc(status.boosts.join(' / ')) +
+        '（同一句词同时用多档灵敏度解码，覆盖不同语速与节奏）');
+    }
+    diag.push('代码版本 ' + esc(data.codeVersion || '未知（旧版本，需重启 DSH）'));
+    if (typeof status.detections === 'number') {
+      diag.push('检测 ' + status.detections + ' / 触发 ' + status.triggers + ' / 拒绝 ' + status.speakerRejections);
+    }
+    // 「既不通过也不拒绝」的定位关键：引擎到底有没有真的解码过。
+    if (typeof status.decodedChunks === 'number') {
+      diag.push('解码 ' + status.decodedChunks + ' 段 · 未命中 ' + (status.noKeywordChunks || 0) + ' 段' +
+        (status.lastSkipReason ? ' · 最近跳过 ' + esc(skipLabel(status.lastSkipReason)) : '') +
+        (status.lastDecodeAt
+          ? ' · 解码于 ' + Math.max(0, Math.round((Date.now() - status.lastDecodeAt) / 1000)) + 's前'
+          : ' · 尚未解码'));
+      if (status.decodedChunks > 100 && !status.detections) {
+        diag.push('引擎一直在解码但从未吐词：换成四字/叠词唤醒词、放慢并清晰发音再试');
+      } else if (status.detections > 0 && !status.triggers) {
+        if (status.lastSkipReason === 'cooldown') {
+          diag.push('连续唤醒被冷却挡住：两次间隔要大于冷却时间（当前 ' +
+            (Number(status.cooldownMs) || 0) + 'ms），可在下方调小');
+        } else {
+          diag.push('已识别到唤醒词但没触发：' +
+            esc(skipLabel(status.lastSkipReason || 'voiceprint-rejected')));
+        }
+      }
+    }
+    // 服务端收到的音频段数与峰值（last/max）：区分「没上传 / 上传但静音 / 电平过低 / 正常」。
+    if (typeof status.audioChunks === 'number') {
+      var peak = Number(status.lastPeak) || 0;
+      var maxPeak = Number(status.maxPeak) || 0;
+      var avgPeak = Number(status.avgPeak) || 0;
+      diag.push('音频 ' + status.audioChunks + ' 段 · 峰值 ' + peak.toFixed(3) + '/' + maxPeak.toFixed(3) +
+        ' · 近期均值 ' + avgPeak.toFixed(3) +
+        (status.lastAudioAt
+          ? ' · ' + Math.max(0, Math.round((Date.now() - status.lastAudioAt) / 1000)) + 's前'
+          : ' · 未收到'));
+      if (status.audioChunks > 20 && avgPeak < 0.06) diag.push('电平偏低：靠近麦克风或提高系统录音增益');
+    }
+    var reaction = data.reaction || null;
+    if (reaction) {
+      diag.push('唤醒反应 ' + (reaction.ok
+        ? '成功 · ' + esc(reaction.petId || '') + (reaction.surface ? ' · ' + esc(reaction.surface) : '')
+        : '失败 · ' + esc(reaction.reason || 'unknown') + (reaction.message ? ' · ' + esc(reaction.message) : '')));
+    }
+    message('diagText', diag.join(' / '), (menu.lastOpenResult && !menu.lastOpenResult.ok)
+      || (reaction && !reaction.ok) ? 'err' : '');
+  }
+
+  // 定时轮询只刷新状态，避免覆盖用户正在编辑的唤醒词/阈值。
+  function refresh(loadSettingsToo) {
+    if (loadSettingsToo !== false) {
+      request('api/kws/settings').then(renderSettings).catch(function (error) { message('globalMsg', String(error), 'err'); });
+    }
+    request('api/kws/status').then(renderStatus).catch(function () {});
+  }
+
+  function collect() {
+    return {
+      wakeWords: $('wakeWords').value,
+      keywordLines: $('keywordLines').value.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean),
+      keywordsScore: Number($('keywordsScore').value),
+      keywordsThreshold: Number($('keywordsThreshold').value),
+      speakerThreshold: Number($('speakerThreshold').value),
+      cooldownMs: Number($('cooldownMs').value),
+      enabled: $('enabled').checked,
+      reactEnabled: $('reactEnabled').checked,
+      reactAnim: $('reactAnim').checked,
+      reactSpeak: $('reactSpeak').checked,
+      reactDuration: Number($('reactDuration').value),
+      reactText: $('reactText').value,
+      reactPetId: $('reactPetId').value,
+    };
+  }
+
+  $('speakerThreshold').addEventListener('input', function () {
+    text('thresholdValue', Number(this.value).toFixed(2));
+  });
+  $('saveBtn').addEventListener('click', function () {
+    if (state.saving) return;
+    state.saving = true;
+    message('saveMsg', '保存中…');
+    request('api/kws/settings', { method: 'POST', json: collect() }).then(function (data) {
+      state.saving = false;
+      if (!data.ok) { message('saveMsg', data.message || data.reason || '保存失败', 'err'); return; }
+      message('saveMsg', '已保存并重新加载唤醒词', 'ok');
+      renderSettings(data);
+      refresh();
+    }).catch(function (error) { state.saving = false; message('saveMsg', String(error), 'err'); });
+  });
+  $('reactTestBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('reactMsg', '正在触发…');
+    request('api/kws/react', { method: 'POST' }).then(function (data) {
+      button.disabled = false;
+      if (data && data.ok) {
+        message('reactMsg', '已触发：' + (data.text || '') +
+          (data.petId ? '（' + data.petId + (data.surface ? ' · ' + data.surface : '') + '）' : ''), 'ok');
+        speakReaction(data.text);
+      } else {
+        message('reactMsg', (data && (data.message || data.reason)) || '触发失败', 'err');
+      }
+      refresh();
+    }).catch(function (error) { button.disabled = false; message('reactMsg', String(error), 'err'); });
+  });
+  $('retryBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('globalMsg', '正在重新初始化引擎…');
+    request('api/kws/retry', { method: 'POST' }).then(function (data) {
+      button.disabled = false;
+      if (data && data.ok) {
+        message('globalMsg', '引擎已重建（第 ' + (data.restarts || 0) + ' 次）· ' + esc(data.state) +
+          ' · 唤醒词 ' + esc((data.keywords || []).join('/') || '未解析'), 'ok');
+      } else {
+        message('globalMsg', '引擎重建失败：' + esc((data && (data.message || data.reason)) || '未知原因'), 'err');
+      }
+      refresh();
+    }).catch(function (error) {
+      button.disabled = false;
+      message('globalMsg', '引擎重建请求失败：' + String(error), 'err');
+      refresh();
+    });
+  });
+  $('installBtn').addEventListener('click', function () {
+    message('globalMsg', '正在检查并补装模型（首次可能要几分钟）…');
+    request('api/kws/model/install', { method: 'POST', json: { force: false } }).then(function (data) {
+      message('globalMsg', data.ok ? '模型安装已开始/已完成' : (data.reason || '安装失败'), data.ok ? 'ok' : 'err');
+      refresh();
+    });
+  });
+  $('clearBtn').addEventListener('click', function () {
+    request('api/kws/voiceprint', { method: 'DELETE' }).then(function () {
+      message('enrollMsg', '声纹已清除，语音唤醒已自动停用', 'ok');
+      refresh();
+    });
+  });
+  $('micBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('enrollMsg', '正在申请麦克风权限…');
+    ensureMicPermission(true).then(function (ok) {
+      button.disabled = false;
+      if (ok) {
+        message('enrollMsg', '麦克风权限已就绪，可以开始录入', 'ok');
+        return;
+      }
+      // 详细原因已由 ensureMicPermission 用 micError 写入，这里补最关键的一步。
+      message('enrollMsg', '仍无法启动麦克风。如果「语音唤醒」开关是开着的，它正在占用麦克风：' +
+        '先把它关掉、等 5 秒再点本按钮（关掉后正式监听会释放设备）。' +
+        '若仍失败，检查 Windows 设置 → 隐私和安全性 → 麦克风里的「允许桌面应用访问」，' +
+        '以及这个麦克风是否被其它程序独占、或驱动里开了独占模式。', 'err');
+    });
+  });
+
+  /** 与 KWS 监听端一致：先 FIR 抗混叠低通，再从设备采样率线性插值到 16kHz。 */
+  function makeResampler(fromRate, toRate) {
+    var taps = null;
+    if (fromRate > toRate) {
+      var N = 127, fc = Math.min(fromRate, toRate) * 0.5 * 0.85 / fromRate;
+      taps = new Float64Array(N);
+      var center = (N - 1) / 2, sum = 0;
+      for (var t = 0; t < N; t += 1) {
+        var d = t - center;
+        var ideal = d === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * d) / (Math.PI * d);
+        var w = 0.42 - 0.5 * Math.cos(2 * Math.PI * t / (N - 1)) + 0.08 * Math.cos(4 * Math.PI * t / (N - 1));
+        taps[t] = ideal * w; sum += taps[t];
+      }
+      for (var q = 0; q < N; q += 1) taps[q] /= sum || 1;
+    }
+    var step = fromRate / toRate, cursor = 0, total = 0;
+    var prev = new Float32Array(0), prevStart = 0, cur = new Float32Array(0), curStart = 0;
+    var tail = taps ? new Float32Array(taps.length - 1) : new Float32Array(0);
+    function sampleAt(index) {
+      if (index >= curStart) return cur[index - curStart] || 0;
+      if (index >= prevStart) return prev[index - prevStart] || 0;
+      return 0;
+    }
+    return function push(input) {
+      if (taps) {
+        var merged = new Float32Array(tail.length + input.length);
+        merged.set(tail, 0); merged.set(input, tail.length);
+        var filtered = new Float32Array(input.length), offset = tail.length;
+        for (var i = 0; i < input.length; i += 1) {
+          var acc = 0;
+          for (var k = 0; k < taps.length; k += 1) {
+            var idx = offset + i - k;
+            if (idx >= 0) acc += merged[idx] * taps[k];
+          }
+          filtered[i] = acc;
+        }
+        var keep = taps.length - 1;
+        tail = merged.length > keep ? merged.slice(merged.length - keep) : merged.slice();
+        input = filtered;
+      }
+      prev = cur; prevStart = curStart;
+      cur = input; curStart = total; total += input.length;
+      var out = [];
+      while (cursor + 1 < total) {
+        var index = Math.floor(cursor), fraction = cursor - index;
+        out.push(sampleAt(index) + (sampleAt(index + 1) - sampleAt(index)) * fraction);
+        cursor += step;
+      }
+      return out;
+    };
+  }
+
+  /** DSH/Electron 常只给顶层 frame 弹麦克风授权，iframe 内请求会直接 Permission denied。 */
+  function topMediaDevices() {
+    try {
+      if (window.parent === window) return null;
+      var devices = window.parent.navigator && window.parent.navigator.mediaDevices;
+      return devices && typeof devices.getUserMedia === 'function' ? devices : null;
+    } catch (e) { return null; }
+  }
+
+  var micPermissionGranted = false;
+
+  /** 在顶层 frame 主动发一次请求，触发权限弹窗；拿到就立刻停掉，只借它申请授权。 */
+  function requestMicPermission(force) {
+    if (!force && micPermissionGranted) return Promise.resolve(true);
+    // 用与实际采集相同的 realm，状态才不会「显示已就绪、录入仍被拒」。
+    var realm = captureRealms()[0];
+    if (!realm) {
+      return Promise.reject(new Error('当前环境不支持 getUserMedia / AudioContext（需要安全上下文）'));
+    }
+    function grab() {
+      return realm.devices.getUserMedia({ audio: true, video: false });
+    }
+    function attempt(times) {
+      return grab().catch(function (error) {
+        var name = (error && error.name) || '';
+        var raw = (error && error.message) || '';
+        // 「Could not start audio source」= NotReadableError：设备刚被释放、仍被占用或驱动没起来。
+        // 等一下再试一次通常能成，不要直接把英文原文丢给用户。
+        if (times > 0 && (name === 'NotReadableError' || name === 'TrackStartError' ||
+            /could not start audio source/i.test(raw))) {
+          return new Promise(function (resolve) { setTimeout(resolve, 600); }).then(function () {
+            return attempt(times - 1);
+          });
+        }
+        throw error;
+      });
+    }
+    return attempt(1).then(function (stream) {
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      micPermissionGranted = true;
+      // 稍等一下让设备释放，紧接着 iframe 内再开流更不容易 NotReadableError。
+      return new Promise(function (resolve) { setTimeout(function () { resolve(true); }, 120); });
+    });
+  }
+
+  function micState(value, ok) {
+    var node = $('micState');
+    node.textContent = value;
+    node.className = 'pill' + (ok === true ? ' ok' : (ok === false ? ' bad' : ''));
+  }
+
+  /** 打开设置页即自动申请一次；已授权不打扰，曾被拒绝则等用户点按钮重试。 */
+  function ensureMicPermission(interactive) {
+    micState(interactive ? '正在重新申请麦克风权限…' : '正在申请麦克风权限…');
+    function grant() {
+      return requestMicPermission(interactive).then(function () {
+        micState('麦克风权限已就绪', true);
+        return true;
+      }).catch(function (error) {
+        micState('权限未就绪', false);
+        // 用 micError 翻译成可执行的中文，不要把浏览器的英文原文直接抛给用户。
+        message('enrollMsg', micError(error), 'err');
+        return false;
+      });
+    }
+    var permissions = navigator.permissions;
+    if (interactive || !permissions || typeof permissions.query !== 'function') return grant();
+    return permissions.query({ name: 'microphone' }).then(function (result) {
+      if (result && result.state === 'granted') {
+        micPermissionGranted = true;
+        micState('麦克风权限已就绪', true);
+        return true;
+      }
+      // iframe 内常因 Permissions Policy 报 denied，顶层 frame 仍可能弹出授权，自动试一次。
+      return grant();
+    }).catch(grant);
+  }
+
+  /** 把 getUserMedia 的 DOMException 翻成可执行的中文提示；message() 用 textContent，无需转义。 */
+  function micError(error) {
+    var name = (error && error.name) || '';
+    var raw = error && error.message ? error.message : String(error);
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+      return '没有检测到可用麦克风：请确认系统有默认录音设备、已允许桌面应用使用麦克风。（' + raw + '）';
+    }
+    if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+      return '麦克风权限被拒绝：请点「申请麦克风权限」让 DSH 主窗口弹出授权框并允许；' +
+        '若仍被拒，请在系统隐私设置里允许桌面应用使用麦克风。（' + raw + '）';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return '麦克风被其它程序占用或启动失败，关闭占用程序后重试。（' + raw + '）';
+    }
+    return '无法使用麦克风：' + raw + '；请检查系统默认录音设备与隐私授权。';
+  }
+
+  /** 采集优先放在 DSH 主窗口（顶层 frame）：Electron 常只给顶层 frame 媒体权限。 */
+  function captureRealms() {
+    var realms = [];
+    try {
+      var devices = topMediaDevices();
+      if (devices) {
+        var Ctor = window.parent.AudioContext || window.parent.webkitAudioContext;
+        if (Ctor) realms.push({ devices: devices, Ctor: Ctor });
+      }
+    } catch (e) {}
+    var own = window.AudioContext || window.webkitAudioContext;
+    if (navigator.mediaDevices && own) realms.push({ devices: navigator.mediaDevices, Ctor: own });
+    return realms;
+  }
+
+  /** 逐 realm、逐约束尝试：设备/约束错误降级，权限被拒就换下一个 realm。 */
+  function openMicrophone() {
+    var realms = captureRealms();
+    if (realms.length === 0) {
+      return Promise.reject(new Error('当前环境不支持 getUserMedia / AudioContext，请确认在 DSH 主窗口内打开本页'));
+    }
+    // WebRTC 里 echoCancellation / noiseSuppression / autoGainControl 的默认值都是 true，
+    // 而 { echoCancellation: false } 只是 ideal，设备可以忽略并继续开启——Windows 驱动一旦开启，
+    // 会把持续人声当回声/噪声压到底噪水平，只有强瞬态放行（实测录音前 0.9 秒只剩 0.03 底噪），
+    // KWS 拿到 0.5 秒残片自然完全检不出。所以首选 exact:false 强制关闭，不支持再逐级降级。
+    // 全部档位都不请求自动增益：录音电平由用户和系统决定，插件不改动音量。
+    var attempts = [
+      { audio: { channelCount: 1, echoCancellation: { exact: false }, noiseSuppression: { exact: false }, autoGainControl: { exact: false } }, video: false },
+      { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false },
+      { audio: true, video: false }, // 最后兜底：可能带回默认音频处理，录音时会明确提示实际状态
+    ];
+    var permission = ['NotAllowedError', 'SecurityError', 'PermissionDeniedError'];
+    var lastError = null;
+
+    function tryConstraints(realm, index) {
+      if (index >= attempts.length) return Promise.reject(lastError || new Error('麦克风不可用'));
+      return realm.devices.getUserMedia(attempts[index]).then(function (stream) {
+        return { stream: stream, Ctor: realm.Ctor }; // 音频图也必须建在同一个 realm
+      }).catch(function (error) {
+        lastError = error;
+        if (permission.indexOf(error && error.name) >= 0) throw error;
+        return tryConstraints(realm, index + 1);
+      });
+    }
+
+    function tryRealm(index) {
+      if (index >= realms.length) return Promise.reject(lastError || new Error('麦克风不可用'));
+      return tryConstraints(realms[index], 0).catch(function (error) {
+        lastError = error;
+        return tryRealm(index + 1);
+      });
+    }
+    return tryRealm(0);
+  }
+
+  $('enrollBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('enrollMsg', '正在检查麦克风设备…');
+    var media = null, context = null, processor = null, sink = null, source = null, finished = false;
+    var values = [], target = 16000 * 3, resample, timer = null, announced = false;
+    function cleanup() {
+      try { if (timer) clearTimeout(timer); } catch (e) {}
+      try { if (processor) processor.onaudioprocess = null; } catch (e) {}
+      try { if (source) source.disconnect(); } catch (e) {}
+      try { if (processor) processor.disconnect(); } catch (e) {}
+      try { if (sink) sink.disconnect(); } catch (e) {}
+      try { if (media) media.getTracks().forEach(function (track) { track.stop(); }); } catch (e) {}
+      try { if (context) context.close(); } catch (e) {}
+      button.disabled = false;
+    }
+    function submit() {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      // 按原始音频录入：服务端只对 KWS 解码输入做电平增强，声纹缓冲保留未增强的音频，
+      // 录入与唤醒两条链路一致才不会把同一人误拒。
+      var bytes = new Uint8Array(new Int16Array(values).buffer);
+      $('enrollBar').style.width = '100%';
+      message('enrollMsg', '正在生成声纹…');
+      request('api/kws/enroll', { method: 'POST', body: bytes }).then(function (data) {
+        if (!data.ok) {
+          message('enrollMsg', (data.message ? data.message + '（' + data.reason + '）' : data.reason) || '录入失败', 'err');
+          return;
+        }
+        message('enrollMsg', '录入成功（第 ' + data.count + ' 次，维度 ' + data.dim + '）', 'ok');
+        refresh();
+      }).catch(function (error) { message('enrollMsg', String(error), 'err'); });
+    }
+    openMicrophone().then(function (capture) {
+      media = capture.stream;
+      // AudioContext 与 MediaStream 必须同 realm，否则跨 frame 建图会抛 InvalidStateError。
+      // 与 KWS 监听端一致：用设备默认采样率（部分 Electron/Windows 强设 16k 的
+      // MediaStreamSource 会稳定输出静音），再交给同一套抗混叠重采样转 16k。
+      context = new capture.Ctor();
+      resample = makeResampler(context.sampleRate || 16000, 16000);
+      source = context.createMediaStreamSource(capture.stream);
+      processor = context.createScriptProcessor(4096, 1, 1);
+      sink = context.createGain(); sink.gain.value = 0; // 汇点静音防回授，不改变采集电平
+      processor.onaudioprocess = function (event) {
+        if (!announced) {
+          announced = true;
+          message('enrollMsg', '麦克风已就绪，请清晰地说：' + ($('wakeWords').value || '大肥鱼') + ' …');
+        }
+        var input = new Float32Array(event.inputBuffer.getChannelData(0));
+        var floats = resample(input);
+        for (var i = 0; i < floats.length && values.length < target; i += 1) {
+          var v = Math.max(-1, Math.min(1, floats[i] || 0));
+          values.push(v < 0 ? Math.round(v * 32768) : Math.round(v * 32767));
+        }
+        $('enrollBar').style.width = Math.min(100, values.length / target * 100) + '%';
+        if (values.length >= target) submit();
+      };
+      source.connect(processor); processor.connect(sink); sink.connect(context.destination);
+      if (context.resume) context.resume();
+      // 顶层 frame 的 AudioContext 在窗口后台时可能被节流；超时给出可读结果而不是一直卡着。
+      timer = setTimeout(function () {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        message('enrollMsg', '录音超时：没有收到音频数据，请确认麦克风未被静音/占用后重试', 'err');
+      }, 12000);
+      message('enrollMsg', '麦克风已启动，等待音频…');
+    }).catch(function (error) {
+      cleanup();
+      var hint = micError(error);
+      message('enrollMsg', hint, 'err');
+      // 附带设备枚举结果：区分「真的没有设备」和「约束被拒」。
+      var devices = navigator.mediaDevices;
+      if (devices && typeof devices.enumerateDevices === 'function') {
+        devices.enumerateDevices().then(function (list) {
+          var inputs = list.filter(function (item) { return item.kind === 'audioinput'; });
+          message('enrollMsg', hint + ' 检测到 ' + inputs.length + ' 个音频输入设备。', 'err');
+        }).catch(function () {});
+      }
+    });
+  });
+
+  /** 通用 WAV 回放：非音频响应（404 等）要读 JSON 给出可读原因，不能只显示播放失败。 */
+  function playWav(url, label, button) {
+    return fetch(url, { cache: 'no-store' }).then(function (res) {
+      var type = (res.headers && typeof res.headers.get === 'function' && res.headers.get('content-type')) || '';
+      if (!res.ok || type.indexOf('audio') < 0) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          throw new Error(data.message || data.reason || '读取录音失败');
+        });
+      }
+      return res.blob();
+    }).then(function (blob) {
+      var objectUrl = URL.createObjectURL(blob);
+      var audio = new Audio(objectUrl);
+      var done = function () { URL.revokeObjectURL(objectUrl); if (button) button.disabled = false; };
+      audio.onended = done;
+      audio.onerror = done;
+      return audio.play().then(function () {
+        message('testMsg', '正在回放：' + label, 'ok');
+      }, function (error) { done(); throw error; });
+    });
+  }
+
+  /** 逐条列出声纹样本；旧版只存了 embedding 的条目标成「无录音」。 */
+  function renderVoiceprintList(vp) {
+    var box = $('voiceprintList');
+    var list = (vp && vp.samples) || [];
+    if (!list.length) {
+      box.innerHTML = '<span class="hint">还没有录入声纹。录入后这里会逐条列出，每条都能单独播放。</span>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      var when = item.at ? new Date(item.at).toLocaleString() : '时间未知（旧版录入）';
+      html += '<div class="row" style="margin:4px 0">' +
+        '<span>第 ' + item.index + ' 条 · ' + esc(when) + '</span>' +
+        (item.audioAvailable
+          ? '<button type="button" class="ghost" data-vp-index="' + item.index + '">播放</button>'
+          : '<span class="pill">无录音，重新录入后可播放</span>') +
+        '</div>';
+    }
+    box.innerHTML = html;
+  }
+
+  $('voiceprintList').addEventListener('click', function (event) {
+    var target = event.target;
+    while (target && target !== this && !(target.getAttribute && target.getAttribute('data-vp-index'))) {
+      target = target.parentNode;
+    }
+    var index = target && target !== this ? target.getAttribute('data-vp-index') : null;
+    if (!index) return;
+    var button = target;
+    button.disabled = true;
+    message('testMsg', '正在读取第 ' + index + ' 条声纹录音…');
+    playWav(api('api/kws/voiceprint/audio', { index: index, t: Date.now() }),
+      '第 ' + index + ' 条录入声纹', button).catch(function (error) {
+      button.disabled = false;
+      message('testMsg', error && error.message ? error.message : String(error), 'err');
+    });
+  });
+
+  $('replayTestBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('testMsg', '正在读取刚才的测试录音…');
+    playWav(api('api/kws/test/audio', { t: Date.now() }), '刚才测试时引擎收到的音频', button)
+      .catch(function (error) {
+        button.disabled = false;
+        message('testMsg', error && error.message ? error.message : String(error), 'err');
+      });
+  });
+
+  // 正式监听最近 6 秒：用来对比「按住测试」与真实监听收到的声音是否一致。
+  $('replayListenBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('testMsg', '正在读取正式监听最近 6 秒音频…');
+    playWav(api('api/kws/listen-audio', { t: Date.now() }), '正式监听最近 6 秒音频', button)
+      .catch(function (error) {
+        button.disabled = false;
+        message('testMsg', error && error.message ? error.message : String(error), 'err');
+      });
+  });
+
+  /** 读取实际生效的音频处理开关：约束写 false 不等于设备真的关了，必须看 getSettings()。 */
+  function captureSummary(stream, context) {
+    var track = stream && stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
+    var s = (track && track.getSettings) ? track.getSettings() : {};
+    var flag = function (v) { return v === false ? '关' : (v === true ? '开' : '未知'); };
+    var rate = s.sampleRate || (context && context.sampleRate) || 0;
+    return {
+      text: '采集 ' + rate + 'Hz · 回声消除 ' + flag(s.echoCancellation) +
+        ' · 降噪 ' + flag(s.noiseSuppression) + ' · 自动增益 ' + flag(s.autoGainControl),
+      bad: s.echoCancellation === true || s.noiseSuppression === true || s.autoGainControl === true,
+      settings: s,
+    };
+  }
+
+  var wakeTestHold = null;
+
+  function sendWakeTest(values, callbacks, info) {
+    var bytes = new Uint8Array(new Int16Array(values).buffer);
+    $('testState').textContent = '分析中';
+    $('testState').className = 'pill';
+    message('testMsg', '正在跑 KWS + 声纹校验…');
+    request('api/kws/test?callbacks=' + (callbacks || 0), { method: 'POST', body: bytes }).then(function (data) {
+      if (!data || data.ok === false) {
+        $('testState').textContent = '失败';
+        message('testMsg', (data && (data.message || data.reason)) || '测试请求失败', 'err');
+        return;
+      }
+      $('testState').textContent = data.triggered ? '已激活' : '未激活';
+      $('testState').className = 'pill' + (data.triggered ? ' ok' : '');
+      var audio = data.audio || {};
+      var bits = [];
+      if (typeof audio.peak === 'number') bits.push('峰值 ' + audio.peak.toFixed(3));
+      if (typeof audio.rms === 'number') bits.push('RMS ' + audio.rms.toFixed(3));
+      if (audio.clippedRatio > 0.02) bits.push('削波 ' + Math.round(audio.clippedRatio * 100) + '%');
+      var diag = bits.length ? ' · ' + bits.join(' / ') : '';
+      var tailNote = data.detectedAfterTail
+        ? ' · 补 0.5s 尾部静音后才检出：说完停 0.2~0.3 秒再松手，让引擎确认词尾'
+        : (data.tailRetry ? ' · 补尾部静音重放后仍未检出' : '');
+      var voiceRatio = audio.totalBlocks > 0 ? audio.voiceBlocks / audio.totalBlocks : 0;
+      var capture = audio.voiceBlocks <= 0
+        ? ' · 麦克风几乎没拾到声音，检查系统录音设备与音量'
+        : (voiceRatio < 0.35
+          ? ' · 有效语音 ' + audio.voiceBlocks + '/' + audio.totalBlocks + ' 段（' +
+            Math.round(voiceRatio * 100) + '%）' +
+            (audio.callbacks ? ' · 音频回调 ' + audio.callbacks + ' 次' : '')
+          : (audio.clippedRatio > 0.02 ? ' · 有明显削波，离麦克风远一点或自行调低系统录音增益' : ''));
+      // 按实测指标给针对性建议，别在参数已经是推荐值时还让用户「调到 3 / 0.15」。
+      var advice;
+      var amp = data.amplified;
+      if (typeof audio.peak === 'number' && (audio.peak >= 0.98 || audio.rms >= 0.15)) {
+        advice = '电平明显过高（峰值 ' + audio.peak.toFixed(3) + ' / RMS ' +
+          Number(audio.rms || 0).toFixed(3) + '），麦克风增益太大、已接近削波，' +
+          '请在 Windows 声音设置里把该麦克风音量调低到峰值约 0.5 再试';
+      } else if (amp && amp.detected) {
+        // 服务端实测：自适应放大后能检出 → 音量是唯一障碍。
+        advice = '电平偏低（峰值 ' + audio.peak.toFixed(3) + ' / RMS ' +
+          Number(audio.rms || 0).toFixed(3) + '）：把这段放大 ' + amp.factor + ' 倍后能检出「' +
+          amp.keyword + '」，说明音量是唯一障碍。请在 Windows 声音设置 → 输入 → 设备属性里' +
+          '把麦克风音量调高（正常说话峰值到 0.6 左右），或靠近麦克风；不用喊';
+      } else if (data.suggest && typeof data.suggest.boost === 'number') {
+        // 服务端扫过几个 boosts：这个值能让同一段录音检出。
+        advice = '这段录音在「唤醒加成」= ' + data.suggest.boost + '（触发阈值 ' +
+          data.suggest.threshold + '）下能检出，当前 ' + data.boost +
+          ' 对这次语速不适用——三字词的最优加成会随语速漂移。' +
+          '把「唤醒加成」改成 ' + data.suggest.boost + ' 再试';
+      } else if (Number(data.boost) === 3 && Number(data.keywordThreshold) === 0.15) {
+        // 放大也检不出 → 不是音量，是发音/语速与词表不匹配。
+        advice = '参数已是推荐值 3 / 0.15。' + (amp ? '放大 ' + amp.factor + ' 倍也检不出，' : '') +
+          '说明是发音/语速与词表不匹配——三字词对连读极敏感。' +
+          '建议在「唤醒词」里用逗号追加一个四字词备用，例如「大肥鱼,小爱同学」，哪个能喊出用哪个';
+      } else {
+        advice = '参数偏保守，把「唤醒加成」调到 3、「触发阈值」调到 0.15 再试';
+      }
+      if (data.triggered) {
+        message('testMsg', '唤醒成功：识别到「' + data.keyword + '」且声纹通过（测试模式，不打开对话）' + diag + tailNote, 'ok');
+      } else if (data.detected) {
+        message('testMsg', '识别到「' + data.keyword + '」但没激活：' + (data.reason || '未知原因') +
+          (typeof data.score === 'number'
+            ? ' · 声纹分数 ' + data.score.toFixed(3) + ' / 阈值 ' + Number(data.threshold).toFixed(2)
+            : '') + diag + tailNote, 'err');
+      } else {
+        message('testMsg', '没有识别到唤醒词（' + data.seconds + ' 秒）' + diag + capture + tailNote +
+          ' · 当前词「' + ((data.keywords || []).join('/') || '未解析') + '」· boost ' + data.boost +
+          ' / 阈值 ' + data.keywordThreshold +
+          (info ? ' · ' + info.text : '') +
+          (info && info.bad
+            ? ' · ⚠ 系统仍开启了降噪/回声消除，这是声音被压掉的主因，请在 Windows 声音设置里关闭该设备的「音频增强」'
+            : '') +
+          '；' + advice, 'err');
+      }
+    }).catch(function (error) {
+      $('testState').textContent = '失败';
+      message('testMsg', String(error), 'err');
+    });
+  }
+
+  /** 按住录音：与录入同一套 realm/重采样/原始 PCM，不做任何增益；松开后交给 /api/kws/test。 */
+  function startWakeTest() {
+    if (wakeTestHold) return;
+    var button = $('holdTestBtn'), bar = $('testBar');
+    var values = [], timer = null, media = null, context = null;
+    var processor = null, sink = null, source = null;
+    var maxSamples = 16000 * 10, finished = false;
+    var announced = false, callbacks = 0, captureState = null;
+    var current = {};
+    wakeTestHold = current;
+    button.textContent = '录音中…松开结束';
+    $('testState').textContent = '启动中';
+    $('testState').className = 'pill ok';
+    message('testMsg', '正在启动麦克风，看到「请说话」再开始…');
+    bar.style.width = '0%';
+
+    function cleanup() {
+      try { if (timer) clearTimeout(timer); } catch (e) {}
+      try { if (processor) processor.onaudioprocess = null; } catch (e) {}
+      try { if (source) source.disconnect(); } catch (e) {}
+      try { if (processor) processor.disconnect(); } catch (e) {}
+      try { if (sink) sink.disconnect(); } catch (e) {}
+      try { if (media) media.getTracks().forEach(function (track) { track.stop(); }); } catch (e) {}
+      try { if (context) context.close(); } catch (e) {}
+      button.textContent = '按住录音测试唤醒';
+      bar.style.width = '0%';
+    }
+    function finish(submit) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      if (wakeTestHold === current) wakeTestHold = null;
+      if (!submit) {
+        $('testState').textContent = '已取消';
+        $('testState').className = 'pill';
+        message('testMsg', '已取消录音', '');
+        return;
+      }
+      if (values.length < 1600) {
+        $('testState').textContent = '录音太短';
+        $('testState').className = 'pill';
+        message('testMsg', '录音太短，请按住按钮并念出唤醒词', 'err');
+        return;
+      }
+      sendWakeTest(values, callbacks, captureState);
+    }
+    current.cancel = function () { finish(false); };
+    current.finish = function () { finish(true); };
+
+    openMicrophone().then(function (capture) {
+      if (finished) {
+        try { capture.stream.getTracks().forEach(function (track) { track.stop(); }); } catch (e) {}
+        return;
+      }
+      media = capture.stream;
+      context = new capture.Ctor();
+      captureState = captureSummary(capture.stream, context);
+      var resample = makeResampler(context.sampleRate || 16000, 16000);
+      source = context.createMediaStreamSource(capture.stream);
+      processor = context.createScriptProcessor(4096, 1, 1);
+      sink = context.createGain();
+      sink.gain.value = 0; // 汇点静音防回授，不改变采集电平
+      processor.onaudioprocess = function (event) {
+        callbacks += 1;
+        if (!announced) {
+          announced = true;
+          $('testState').textContent = '录音中';
+          message('testMsg', captureState.text + (captureState.bad
+            ? ' · ⚠ 系统仍开启了音频处理，会压掉持续语音' : '') + ' · 请清晰念出唤醒词…');
+        }
+        var input = new Float32Array(event.inputBuffer.getChannelData(0));
+        var floats = resample(input);
+        for (var i = 0; i < floats.length && values.length < maxSamples; i += 1) {
+          var v = Math.max(-1, Math.min(1, floats[i] || 0));
+          values.push(v < 0 ? Math.round(v * 32768) : Math.round(v * 32767));
+        }
+        bar.style.width = Math.min(100, values.length / maxSamples * 100) + '%';
+        if (values.length >= maxSamples) finish(true);
+      };
+      source.connect(processor);
+      processor.connect(sink);
+      sink.connect(context.destination);
+      if (context.resume) context.resume();
+      timer = setTimeout(function () { finish(true); }, 11000);
+    }).catch(function (error) {
+      finish(false);
+      message('testMsg', micError(error), 'err');
+    });
+  }
+
+  $('holdTestBtn').addEventListener('pointerdown', function (event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    try { this.setPointerCapture(event.pointerId); } catch (e) {}
+    startWakeTest();
+  });
+  $('holdTestBtn').addEventListener('pointerup', function () { if (wakeTestHold) wakeTestHold.finish(); });
+  $('holdTestBtn').addEventListener('pointercancel', function () { if (wakeTestHold) wakeTestHold.cancel(); });
+  $('holdTestBtn').addEventListener('lostpointercapture', function () { if (wakeTestHold) wakeTestHold.cancel(); });
+  $('holdTestBtn').addEventListener('keydown', function (event) {
+    if ((event.key === ' ' || event.key === 'Enter') && !wakeTestHold) { event.preventDefault(); startWakeTest(); }
+  });
+  $('holdTestBtn').addEventListener('keyup', function () { if (wakeTestHold) wakeTestHold.finish(); });
+
+  // 实时麦克风电平：直接轮询 KWS 实际收到的音频峰值，确认麦克风是否拾音、是否削波。
+  function startLevelMeter() {
+    var hold = 0;
+    setInterval(function () {
+      if (document.hidden) return;
+      request('api/kws/level').then(function (data) {
+        if (!data || !data.ok) return;
+        var peak = Number(data.peak) || 0;
+        hold = Math.max(peak, hold * 0.85); // 视觉保持，便于看清起伏
+        var bar = $('micBar');
+        if (bar) bar.style.width = Math.min(100, Math.round(hold * 100)) + '%';
+        var avg = Number(data.avgPeak) || 0;
+        var voiceRatio = Number(data.voiceRatio) || 0;
+        text('micPeak', '峰值 ' + peak.toFixed(3) + ' · 近期均值 ' + avg.toFixed(3) +
+          ' · 最大 ' + (Number(data.max) || 0).toFixed(3) +
+          ' · 检测 ' + (data.detections || 0) + ' / 触发 ' + (data.triggers || 0) +
+          ' · 有效语音 ' + Math.round(voiceRatio * 100) + '%' +
+          (avg > 0 && avg < 0.06 ? ' · 电平偏低' : ''));
+      }).catch(function () {});
+    }, 400);
+  }
+
+  refresh();
+  void ensureMicPermission(false); // 打开设置页即触发一次 DSH 主窗口的麦克风授权弹窗
+  setInterval(function () { refresh(false); }, 3000);
+  startLevelMeter();
+})();
+</script>
+</body>
+</html>

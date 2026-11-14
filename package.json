@@ -1,0 +1,62 @@
+{
+  "name": "dsh-pet-extend",
+  "version": "0.3.0",
+  "description": "dsh-pet 扩展：右键菜单打开桌宠对话；自带中文 KWS 与声纹模型的设置页，可录入声纹、自定义唤醒词（默认大肥鱼）并用 sherpa-onnx 语音唤醒 pet-chat。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./kws": "./lib/kws.js",
+    "./settings": "./lib/settings.js",
+    "./voiceprint": "./lib/voiceprint.js",
+    "./models": "./lib/models.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "models",
+    "scripts/install-models.mjs",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "install:models": "node scripts/install-models.mjs",
+    "install:deps": "node scripts/install-models.mjs --deps"
+  },
+  "optionalDependencies": {
+    "sherpa-onnx-node": "*",
+    "pinyin-pro": "*"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-connection"],
+      "platform": "web"
+    }
+  },
+  "_comment": [
+    "安装：dsh plugin --profile <profile> add file:<本目录绝对路径>，然后重启 DSH（dsh web 则重启 dsh web）。KWS 与声纹模型已放在 models/ 并随包安装，无需手动下载。",
+    "设置页：插件在 DSH 设置导航里新增「桌宠扩展设置」分区（settings.section），用同源 iframe 嵌入 /dsh-pet-extend/settings；设置统一从这里进入，桌宠右键「更多」只保留「打开桌宠对话」。也可直接访问 http://127.0.0.1:<DSH端口>/dsh-pet-extend/settings。设置与声纹保存在 ~/.dsh/dsh-pet-extend/。",
+    "使用顺序：① 确认模型状态 ② 点击「开始录入」念 3 秒唤醒词 ③ 自定义唤醒词（默认「大肥鱼」）并保存 ④ 打开「语音唤醒」开关。未录入声纹时不允许启用。命中唤醒词且声纹通过后，客户端会从 /api/kws/audio 的 triggered:true 响应直接打开桌宠对话并置前主窗口，宿主广播的菜单事件只作兜底，两者 1.5 秒内去重；设置页「诊断」区显示最近事件、打开结果与唤醒反应结果。",
+    "唤醒反应：命中后调用 dsh-pet 的 POST /dsh-pet-7340/broadcast 让桌宠播放联动动画 + 气泡。注意 /broadcast 的 ?surface= 必填（缺省回 bad-request，这正是「唤醒成功但没反应」的根因），本插件按宠物 display 自动选 desktop/web（both 取 desktop），宠物睡眠中被门禁挡住时先 POST /wake 叫醒再重试；多宠物时优先发给 display 非 none 的。设置页「唤醒反应」卡片可开关/改文案/指定宠物 id，并有「测试反应」按钮（POST /api/kws/react）无需喊唤醒词即可验证。",
+    "语音：dsh-pet 的 TTS 走 Edge 在线神经语音（voiceName: zh-CN-XiaoyiNeural），实测常因 429 限流合成失败导致「有气泡没声音」。因此广播固定 speak:false，回应文案随 /api/kws/audio 响应的 reactionText 回传；客户端朗读时优先调 dsh-pet 的 POST /dsh-pet-7340/voice/speak（读其 /config 的 main.voiceName / main.voiceVolume，音色跟随 dsh-pet 设置，且能命中 dsh-pet 自己的合成缓存，重复短语即使在线 429 也能直接播），合成失败时保持静音，不回退系统 Web Speech（避免出现与 dsh-pet 不一致的音色）。设置页「测试反应」与正常唤醒走同一套朗读逻辑。回应文案支持多行，每行一句、触发时随机选一条，默认「我在 / 你好」。",
+    "可选依赖：sherpa-onnx-node（KWS 与声纹推理，建议 2.0.1+）、pinyin-pro（全量汉字拼音；缺失时用内置常用字表）。Electron 的 V8 不允许 addon 用 external ArrayBuffer 返回向量，声纹 compute 会显式传 enableExternalBuffer=false；若 DSH 未自动安装依赖，运行 npm run install:deps 或 npm install sherpa-onnx-node。",
+    "麦克风：设置页打开时自动通过 DSH 主窗口（顶层 frame）调用一次 getUserMedia 触发授权弹窗，另有「申请麦克风权限」按钮可重试。声纹录入的 getUserMedia + AudioContext 整条链路优先跑在顶层 frame（Electron 常只给顶层 frame 媒体权限，仅在 iframe 内申请权限仍会被拒），失败才回退 iframe；KWS 监听本来就在主窗口。两处都按理想约束 → { audio: true } 降级。仍失败会提示检查系统默认录音设备并附设备枚举数量。KWS 引擎显示 disabled 表示「设置未启用」，不是依赖或模型缺失；先录入声纹再打开开关即可。设置分区的 iframe 已带 allow=\"microphone; autoplay\"，异常时可用页面底部链接在新窗口打开。",
+    "声纹比对对齐：唤醒只会对「本次触发的那句唤醒词」做声纹比对——KWS 命中时唤醒词结束在滚动缓冲末尾，extractUtterance() 按唤醒词字数估算时长上限、再用 20ms 帧能量的端点检测从末尾回溯到最近一段持续静音（≥120ms）作为起点，截出这句唤醒词（太短则补到约 0.6 秒），而不是「取最响的一段」这种无法保证对齐的启发式。",
+    "识别可靠性：设置页保留唤醒加成、触发阈值、声纹阈值、冷却的直接输入（已移除灵敏度预设下拉与官方样例唤醒词下拉，精简界面）；默认 boost=3.0、threshold=0.15、声纹阈值 0.5、冷却 1500ms。真人实测（真实 int8 模型 + 用户本机按住测试的完整录音，含前后静音）：boost 3 + 阈值 0.08~0.15 全部命中「大肥鱼」，boost 2.5 全部漏检，boost 4 反而崩到全漏——过高的唤醒加成让流式解码过早重建流。中文 TTS 在 2.0/0.25 也能过，但真人发音更轻更快，所以默认取 3/0.15；漏检多可把阈值降到 0.12，误触多可回调到 2.5/0.2；电平偏低请自行调整系统录音增益或靠近麦克风，插件不做任何自动增益。loadSettings 会把「完全等于旧默认 2.0/0.25 或 3/0.16」的设置自动迁移到 3/0.15，用户手动调过的其他值不动。模型自带词表全是 4 字/叠词，实测「小爱同学」在全部语速与参数下都稳定 5/5，而 2~3 字短自定义词对语速/发音极敏感；喊了不触发时优先换成四字/叠词，或直接用设置页的「按住录音测试唤醒」定位是没检出、声纹没过还是冷却。灵敏度同时写进 keywords.txt 行内与 KeywordSpotter 全局配置，避免部分 sherpa 版本只认全局值；另显式设置官方召回参数 maxActivePaths=16、numTrailingBlanks=4（实测同一段真人录音：4/8 全部漏检，16 在 blanks 2/4/8 下都能检出）。麦克风被占用：浏览器报「Could not start audio source」是 Chromium 的 NotReadableError，通常不是「没授权」，而是音频源根本启动不了——最常见是正式监听一直占着麦克风。旧代码在 status.enabled=false 时只 report('disabled')，并没有停止采集/释放设备，导致设置页申请权限或录入必然撞车。现已在客户端收到 disabled 时执行 stopWatchdog + stopMedia + listening=false 真正释放设备；设置页申请失败会自动延时 600ms 重试一次（设备刚释放时的常见瞬时错误），并把 NotReadableError 翻译成可执行提示，失败时直接建议「先关掉语音唤醒、等 5 秒再申请」，同时提示检查 Windows 隐私里的「允许桌面应用访问麦克风」以及设备是否被其它程序独占。并行多档（解决不同语速/节奏/音量）：三字词的最优 keywordsScore 随语速漂移，单档一定漏。实测矩阵（4 种节奏「连读/正常/逗号停顿/空格停顿」× 5 种语速 × 3 种音量 = 60 组 TTS）：单档 2/0.25 命中 57/60、单档 3/0.15 只有 43/60、1.5+2+2.5 三档并行 60/60；去掉 1.5 只留 2+2.5+3 掉到 58/60，所以低档必须保留。引擎默认同时构造 1.5/2/2.5 三档 KeywordSpotter（用户把加成调到 3 时自动补上该档，共 4 档），每档用自己行内值的临时词表，重建时统一清理；同一块音频同时喂给所有档位，任一吐词即触发。实测每 100ms 音频的处理成本约 6ms（1.45 秒音频 106ms），远低于实时预算。设置页诊断显示「并行档位」。参数漂移（重要）：三字词的最优 keywordsScore 会随语速漂移——实测同一句「大肥鱼」，一段在 boost 2 下阈值 0.01~0.2 全线命中、boost 3 全灭，另一段恰好相反；多行同拼音词表在 sherpa 里会互相干扰（同别名、不同别名都试过，加行后反而全部失效）。因此未检出时 /api/kws/test 会调用 probeBoosts，对 1.5/2/2.5/3.5 各构造一个临时 KeywordSpotter 跑一遍（必须补 1 秒尾静音，否则词尾被截断会全部漏检），把能检出的值回给设置页提示「这段录音在加成 X 下能检出，改成 X 再试」。按住测试未检出时，服务端还会用自适应增益（0.9/峰值，仅在峰值 0.02~0.45 时）再跑一遍做归因：放大后能检出=电平问题，仍检不出=发音/语速问题。这个探测只影响提示文案，不改主结果、也不改上传音频。实测同一段 1.45 秒「大肥鱼」（有效语音仅 0.6 秒）放大 1.5~4 倍、慢放 1.3/1.6 倍仍全部检不出，而另一段 1.88 秒的同样词能检出，说明三字词对连读/语速极敏感。低电平是另一类主要漏检：实测同一段「大肥鱼」录音（峰值 0.288 / RMS 0.036）在当前参数下原样检不出，把音频放大 4 倍后立刻检出；该录音基频 107Hz、过零率 0.046、有效语音约 0.6 秒，说明发音正常，纯粹是录制电平太低。因此设置页会在峰值 <0.35 或 RMS <0.05 时直接提示调高系统麦克风音量/靠近麦克风，而不是让用户继续调参数或换词；插件依然不做任何自动增益。声纹校验对对齐段再取最响 2 秒，未过阈值时用整段二次判定取较高分，降低误拒；且不再只比「均值 vector」，而是与均值 + 每条录入模板分别比对取最高分——3 次录入的音色/音量差异会被均值稀释，实测同一段录音均值只有 0.292（阈值 0.30 被拒），逐条取最高是 0.622，直接通过。唤醒按住测试里「识别到但没激活：below-threshold」多数就是这个均值稀释造成的。设置页「诊断」除 检测/触发/拒绝 外还显示 解码/未命中 段数、最近跳过原因、音频峰值/近期均值；「解码数不涨」说明引擎没在跑，「未命中数涨」才是识别不到。",
+    "重复唤醒：检测到关键词后重建 KeywordSpotter 流（createStream），而不是只调 resetKeywordStream。实测（真实 int8 模型，同一段录音连续 8 轮）：reset 策略只中 5/8（reset 后流有状态残留），每次 createStream 重建是 8/8；且部分 sherpa-onnx 版本 reset 后该流不再就绪（isReady 恒 false），表现为「成功唤醒一次后再喊没反应」。重建推迟到「下一块音频到达时、acceptWaveform 之前」，该块完整喂给新流，不丢音频；同时清空声纹滚动缓冲，避免上一次唤醒词混进下一次端点对齐。流在会话第一次收到音频时才创建（openSession 不建流），与官方示例「createStream 后立即 acceptWaveform」一致。绝不能在流预热期因「不就绪」而重建：曾加过「连续 2 块不就绪就重建」的兜底，而 KWS 流需要 3 块以上才 ready，结果每 2 块重建一次、永远 ready 不了，表现为「引擎在解码但检测恒 0」；已删除并加回归测试。连续唤醒仍受 cooldownMs 限制（默认 1500ms，用户可调小），被挡时诊断的「最近跳过」会显示「冷却中」而不是「未识别」。若运行中 reload 后 spotter 变 null，下一次音频到达会自动重建（5 秒防抖）。",
+    "自定义唤醒词：设置页直接写中文即可，插件会用模型 tokens.txt 校验并生成 ppinyin token 行；高级模式可直接填 token 行（如 `d à f éi y ú :1.5 #0.3 @大肥鱼`）。",
+    "采集与后台：KWS 采集跑在 DSH 主窗口的 client 半侧，与是否打开设置页无关。音频上下文改用设备默认采样率、由 Resampler 转 16k（部分 Electron/Windows 组合下把 sampleRate 强设 16000 的 MediaStreamSource 会稳定输出静音，表现为「在监听但永不唤醒」）。AudioWorklet 的 process() 每次只有 128 帧，旧实现每帧 postMessage（约 375 次/秒），实测会把主线程淹掉、音频抖动丢帧，表现为「解码在跑但检测恒为 0」；现改为在 worklet 内部攒到 4096 帧再发（约 12 次/秒），与 ScriptProcessor 同量级，并延后 revokeObjectURL 避免模块加载失败。客户端每 3 秒守护：suspended 就 resume；running 却 8 秒无音频回调、或 12 秒上传未成功，都会重开采集并重建会话；visibilitychange / focus / pageshow 时立即 resume；轨道 ended 也会重开。关闭 DSH 主窗口则没有承载页面，采集会停止。设置页「诊断」显示：引擎状态、检测/触发/声纹拒绝计数、客户端采集状态（listening / restarting）、服务端收到的「音频 N 段 · 峰值 last/max · Xs前」，可直接判断「没上传 / 静音 / 电平过低 / 检测到被冷却或拒绝 / 没检测到」。另有「麦克风电平」实时条（每 400ms 轮询 /api/kws/level，反映 KWS 实际收到的音频），说话时应明显起伏、持续顶满则是削波。客户端上传前先做 127 抽头 Blackman 窗 FIR 抗混叠低通（48k→16k 不再让 8kHz 以上噪声折叠进语音频带），然后上传原始 PCM。音频全程不做任何自动增益/降增益：getUserMedia 各档约束都显式 autoGainControl:false（系统/驱动层面的音量设置仍归用户管），encodePcm 只做 Float32→Int16 编码必需的数值限幅，服务端 handleAudio 把同一份原始 PCM 原样喂给 KeywordSpotter 与声纹缓冲，KWS 与声纹、录入与监听四条路径电平完全一致。曾加过软 AGC，会让引擎输入电平与原始电平不一致、旧声纹余弦分数从 1.0 掉到 0.81 而被全部误拒，现已移除；电平偏低时请自行调整系统录音增益或靠近麦克风。音频请求带 1.5s 超时，积压时把最多 4 块 PCM 合并成一个请求、服务端按 1600 样本逐块解码，避免单次挂起阻塞后续音频或让响应排到几秒之后。麦克风约束优先关闭降噪/回声消除（部分驱动开启后会输出静音或压低电平），并加了重启冷却与摘除 stop 时的 ended 回调，避免重启风暴。若运行中 reload 后 spotter 变 null（初始化失败），下一次音频到达会自动重建（5 秒防抖），避免「一直上传但永不检测」。",
+    "模型补装：npm run install:models（--force 可强制重下）；设置页「重新安装模型」等价于调用 /api/kws/model/install。",
+    "声纹逐条回放与按住测试：设置页把 voiceprint.json 里最多 MAX_ENROLLMENTS(3) 条 embedding 逐条列出，每条都有独立「播放」按钮。每次录入成功时把这次的 3 秒 16kHz Int16LE PCM 原样包成独立 WAV（voiceprint-<时间戳>.wav），用 voiceprint-audio.json 索引与 embedding 样本槽位对齐；GET /api/kws/voiceprint/audio?index=N 回放指定条，省略 index 回放最近一条，旧版录入只有 embedding 没录音的条目标为「无录音」且接口返回 404 + no-enrollment-audio；voiceprint.wav 是上一版单文件格式的兼容数据；清除声纹时所有录音与索引一并删除，接口不暴露服务端文件路径。按住录音在设置页用与录入相同的 realm/重采样采集原始 PCM（同样不做任何增益），松开后 POST /api/kws/test：开测试会话走与正式监听相同的逐块流式 KWS 解码 + 声纹校验。实测（真实 int8 模型 + 中文 TTS，三种语速 × 尾部静音/前置静音/丢块/幅度 ×0.25）30/30 全部检出，排除了上传、重采样、丢块、电平、尾部截断。后来直接读取用户本机 last-test.wav 才定位真正原因：1.76 秒录音的能量曲线只有「前 10 块静音 + 2 块尖峰 + 3 块衰减 + 其后全静音」，即只有 0.2~0.4 秒有声音，3 次录入录音同样只剩 2~3 块有效声音；把完整 TTS 削成只剩 2~4 块后真实 KWS 也 100% 检不出，定量复现。根因是设置页 openMicrophone() 首选约束写成 echoCancellation:true / noiseSuppression:true，而 client.js 正式监听是全关——Windows 部分驱动开启这两项会把持续人声当回声/噪声压掉，只剩开头一小段。后续复测又发现更深一层：`{ echoCancellation: false }` 在 WebRTC 里只是 ideal，设备可以忽略并继续开启（这三项默认值本身就是 true）。用户再次复测的 last-test.wav 每块峰值是「前 9 块稳定 0.03 底噪 + 2 块 0.9 尖峰 + 3 块衰减 + 其余 0.03」，两次录入录音形状完全相同，说明降噪把持续人声压到底噪、只放行强瞬态，KWS 始终只拿到 0.5 秒残片。现已把设置页与 client.js 的首选约束都改成 `{ exact: false }` 强制关闭（不支持则逐级降级），录音时用 track.getSettings() 读取实际生效值并在界面显示「回声消除 开/关 · 降噪 开/关 · 自动增益 开/关」，仍为开时直接提示去 Windows 声音设置关闭该设备的「音频增强」；并在音频回调真正开始后才提示用户说话；测试接口因此回报音频体检 peak/rms/clippedRatio/silentBlocks/voiceBlocks、当前词表与 boost/阈值，并保存刚才那段原始音频供 GET /api/kws/test/audio 回放对比。第一遍没检出时自动补 0.5 秒尾部静音重放一次（对齐正式监听里说完自然停顿的状态），用 tailRetry/detectedAfterTail 如实回报，UI 会提示「说完别立刻松手」。测试会话预填 3 秒静音上下文以对齐真实监听的滚动缓冲（否则对齐段不足 0.5 秒会被判 audio-too-short），且不计入 detections/triggers/audioChunks 等真实诊断、不受冷却限制、不调用 onDetect，因此不会打开对话或朗读。测试接口另回报 totalBlocks/voiceBlocks/blockFloor/callbacks（音频回调次数，用来区分「AudioContext 被节流」与「驱动把声音吃掉」）；有效语音块用 max(0.02, 峰值×0.1) 的相对阈值判定——底噪常在 0.03，用绝对 0.01 会把底噪全算成有声、把「只有 0.5 秒真语音」显示成 100% 有效；占比 <35% 时 UI 直接提示「声音被采集端吃掉或说得太短」；/api/kws/level 与设置页「麦克风电平」新增 voiceRatio（最近约 2 秒有效语音块占比的指数移动平均），用同一个指标判断正式监听链路。设置页另可「回放最近监听」：服务端保留正式监听最近 6 秒原始音频，GET /api/kws/listen-audio 返回 WAV，用于对比「按住测试」与「真实监听」收到的声音是否一致。",
+    "诊断：/api/kws/status 与 /api/kws/settings 的 runtime 字段会主动探测 sherpa-onnx-node 能否加载、声纹模型路径与 KWS 词表路径，设置页「模型文件」「声纹」栏显示具体错误；GET /api/status 查看菜单与端口。POST /api/kws/retry 会重新读取磁盘上的设置/词表/声纹、无条件重建 KeywordSpotter（即使当前 ready），await 重建真正结束后回报 ok/state/restarts/keywords，失败则 503 带 reason；旧实现 fire-and-forget 且无条件 200，设置页立刻刷新时状态毫无变化，看起来像「重新初始化没反应」。status 里的 restarts 可用来确认重建真的发生过。注意它只重建 native 语音引擎，不会重载插件 JS 代码，修改插件源码后必须重启 DSH。设置页诊断在「解码数>100 且检测 0」时提示换成四字/叠词、放慢发音，在「检测>0 且触发 0」时提示看声纹门槛与冷却。声纹录入异常一律返回 JSON 400（带 reason/message）并写入 DSH 日志，不会再让 DSH 返回非 JSON 400 使前端只显示「HTTP 400」。",
+    "依赖：菜单功能只需要已安装的 dsh-pet；语音唤醒还需要可选的 sherpa-onnx-node；不修改 dsh-pet 源码与 DSH 内核。"
+  ]
+}
