@@ -2,6 +2,14 @@
   "name": "dsh-pet-extend",
   "version": "0.3.0",
   "description": "dsh-pet 扩展：右键菜单打开桌宠对话；自带中文 KWS 与声纹模型的设置页，可录入声纹、自定义唤醒词（默认大肥鱼）并用 sherpa-onnx 语音唤醒 pet-chat。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wang-yudong/dsh-pet-extend.git"
+  },
+  "homepage": "https://github.com/wang-yudong/dsh-pet-extend#readme",
+  "bugs": {
+    "url": "https://github.com/wang-yudong/dsh-pet-extend/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {
