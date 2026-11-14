@@ -1,14 +1,21 @@
 # dsh-pet-extend
 
-DSH（dsh-pet 桌宠）的语音唤醒扩展：在桌宠右键菜单里直接打开对话，并用**完全离线**的中文语音唤醒词 + 声纹校验把它叫起来。
+[**dsh-pet**](https://github.com/PC2005-cloud/dsh-pet) 的扩展插件。
 
-识别与声纹推理全部在本机跑（sherpa-onnx），不上传任何音频。
+这不是一个「语音唤醒插件」——语音唤醒只是当前已落地的第一个能力模块。这个仓库的定位是给 dsh-pet 持续加能力的扩展层：右键菜单、对话联动、唤醒反馈，以及后续还会继续扩展的其他能力，都以模块形式加在这里。所有功能都以插件方式挂在 dsh-pet 上，**不改 dsh-pet 源码，也不改 DSH 内核**。
 
-- 唤醒引擎：[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 中文 KWS（`sherpa-onnx-kws-zipformer-wenetspeech-3.3M`）
-- 声纹模型：[3D-Speaker CAM++](https://github.com/modelscope/3D-Speaker)（`campplus_sv_zh-cn_16k-common`）
-- 宿主：DSH + dsh-pet（不修改 dsh-pet 源码，也不改 DSH 内核）
+> 本项目扩展的是 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)。
 
-## 特性
+## 能力模块
+
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| 语音唤醒 | 已实现 | 完全离线的中文唤醒词 + 声纹校验，默认「大肥鱼」，可自定义 |
+| 右键菜单 | 已实现 | 桌宠右键「更多」直接打开对话，不弹独立窗口 |
+| 唤醒联动 | 已实现 | 唤醒后打开 pet-chat + 桌宠动画 + 气泡 + 朗读（音色跟随 dsh-pet） |
+| 后续扩展 | 规划中 | 新的交互与自动化能力会继续加到这个扩展里，不限于语音 |
+
+## 语音唤醒模块的能力
 
 | 能力 | 说明 |
 | --- | --- |
@@ -21,9 +28,15 @@ DSH（dsh-pet 桌宠）的语音唤醒扩展：在桌宠右键菜单里直接打
 | 诊断面板 | 检测/触发/拒绝/解码/未命中、音频峰值、有效语音占比、并行档位、最近跳过原因 |
 | 不做的事 | 不自动调节麦克风音量、不做 AGC、不缩放音频幅度、不上传音频 |
 
+识别与声纹推理全部在本机跑（sherpa-onnx），不上传任何音频。
+
+- 唤醒引擎：[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 中文 KWS（`sherpa-onnx-kws-zipformer-wenetspeech-3.3M`）
+- 声纹模型：[3D-Speaker CAM++](https://github.com/modelscope/3D-Speaker)（`campplus_sv_zh-cn_16k-common`）
+- 宿主：[dsh-pet](https://github.com/PC2005-cloud/dsh-pet) + DSH
+
 ## 环境要求
 
-- 已安装 DSH，并且 dsh-pet 桌宠可正常使用
+- 已安装 DSH，并且 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 桌宠可正常使用
 - Node.js **>= 22.12.0**
 - 可用的麦克风
 - Windows / macOS / Linux（依赖 `sherpa-onnx-node` 的预编译包）
@@ -220,6 +233,10 @@ voiceprint-audio.json   录音索引
 
 ## 许可证
 
-MIT，见 [LICENSE](./LICENSE)。
+[Apache License 2.0](./LICENSE)，Copyright 2026 dsh-pet-extend contributors。
+
+Apache 2.0 允许商用、修改与再分发，条件是分发时保留本许可证与版权声明、标注你修改过的文件，并且它自带显式的专利授权。
+
+本项目是 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 的扩展，dsh-pet 自身的许可证以其仓库为准，本项目不改变它。
 
 模型来自 sherpa-onnx / 3D-Speaker 社区发布，遵循其各自的许可证；仓库内仅为方便安装而附带。
