@@ -6,7 +6,7 @@ DSH（dsh-pet 桌宠）的语音唤醒扩展：在桌宠右键菜单里直接打
 
 - 唤醒引擎：[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 中文 KWS（`sherpa-onnx-kws-zipformer-wenetspeech-3.3M`）
 - 声纹模型：[3D-Speaker CAM++](https://github.com/modelscope/3D-Speaker)（`campplus_sv_zh-cn_16k-common`）
-- 宿主：DSH + [dsh-pet](https://github.com/)（不修改 dsh-pet 源码，也不改 DSH 内核）
+- 宿主：DSH + dsh-pet（不修改 dsh-pet 源码，也不改 DSH 内核）
 
 ## 特性
 
