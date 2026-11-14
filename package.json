@@ -28,8 +28,8 @@
     "install:deps": "node scripts/install-models.mjs --deps"
   },
   "optionalDependencies": {
-    "sherpa-onnx-node": "*",
-    "pinyin-pro": "*"
+    "sherpa-onnx-node": "^2.0.1",
+    "pinyin-pro": "^3.29.5"
   },
   "license": "Apache-2.0",
   "dsh": {
