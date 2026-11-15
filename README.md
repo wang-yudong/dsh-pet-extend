@@ -48,6 +48,18 @@
 
 ### 1. 作为 DSH 插件安装
 
+#### 方式 A：从 npm 安装（推荐，发布后即可）
+
+```bash
+# <profile> 换成你的 DSH profile 名；desktop 是桌面端 DSH 的默认 profile
+dsh plugin --profile desktop add dsh-pet-extend
+```
+
+无需克隆仓库、无需手动装依赖与模型——`dsh-pet-extend` 发布到 npm 后，DSH 直接从 registry 拉取，
+包内已附带模型，可选依赖由 DSH 自动安装。在此之前（未发布时）请用方式 B。
+
+#### 方式 B：从本地源码安装（开发 / 改代码用）
+
 ```bash
 # <profile> 换成你的 DSH profile 名；路径用本目录的绝对路径
 dsh plugin --profile <profile> add file:/absolute/path/to/dsh-pet-extend
