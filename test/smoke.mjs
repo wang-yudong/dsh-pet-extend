@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = new URL('../', import.meta.url);
 const pathOf = (relative) => fileURLToPath(new URL(relative, ROOT));
 const tick = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
+// 客户端用例会把 globalThis.fetch 换成桩，之后的真实 HTTP 用例必须用真 fetch。
+const realFetch = globalThis.fetch.bind(globalThis);
 const jsonPost = (base, path, body) => fetch(base + '/dsh-pet-extend/' + path, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
@@ -23,7 +25,7 @@ const jsonPost = (base, path, body) => fetch(base + '/dsh-pet-extend/' + path, {
 function checkSyntax() {
   for (const file of [
     'lib/index.js', 'lib/client.js', 'lib/kws.js', 'lib/settings.js',
-    'lib/voiceprint.js', 'lib/models.js', 'scripts/install-models.mjs',
+    'lib/voiceprint.js', 'lib/models.js', 'lib/speech.js', 'scripts/install-models.mjs',
   ]) {
     execFileSync(process.execPath, ['--check', pathOf(file)]);
   }
@@ -829,6 +831,73 @@ async function checkSettingsFlow() {
     assert.equal(testWav.toString('ascii', 0, 4), 'RIFF');
     assert.equal(testWav.length, 44 + 3200 * 3, '回放的应是刚才测试用的整段 PCM');
 
+    // 4.6 开启语音任务：命中后不再广播「打开桌宠对话」，并把任务配置随响应下发。
+    await jsonPost(base, 'api/kws/settings', { voiceTaskEnabled: true });
+    // 先把上一轮可能残留的事件排空，再看这一轮会不会再广播「打开桌宠对话」。
+    await fetch(base + '/dsh-pet-extend/api/menu-event?wait=0').then((res) => res.json());
+    // 先别吐关键词，把声纹上下文喂够 2 秒，再让它「听到」唤醒词——否则每 100ms 触发一次，
+    // 每次触发都会清空声纹缓冲，最后只剩 100ms 音频被判 audio-too-short。
+    fake.state.hit = false;
+    const session3 = await (await fetch(base + '/dsh-pet-extend/api/kws/session', { method: 'POST' })).json();
+    for (let i = 0; i < 20; i += 1) await postAudio(session3.sessionId);
+    const gapEvents = fetch(base + '/dsh-pet-extend/api/menu-event?wait=1000').then((res) => res.json());
+    await tick(40);
+    fake.state.hit = true;
+    const voiced = await postAudio(session3.sessionId);
+    assert.equal(voiced.triggered, true, '命中响应应触发语音任务：' + JSON.stringify(voiced));
+    assert.equal(voiced.voiceTask?.enabled, true, '命中响应应带回语音任务配置');
+    assert.equal(voiced.voiceTask.mode, 'draft', '默认应是草稿确认');
+    assert.equal(voiced.voiceTask.target, 'current', '默认应接续当前会话');
+    assert.equal(voiced.voiceTask.noSpeechMs, 2000);
+    assert.equal(voiced.voiceTask.silenceMs, 2000);
+    assert.equal(voiced.voiceTask.prerollMs, 0, '不预录：录音从「我在」播完才开');
+    assert.equal(voiced.voiceTask.wakeWords[0], '大肥鱼', '要把唤醒词下发给客户端剥残片');
+    // 流程不变：唤醒反应仍是「我在 / 你好」，「我在听」等反应播完再切。
+    assert.ok(['我在', '你好'].includes(voiced.reactionText), '唤醒反应文案应保持原样');
+    assert.equal((await gapEvents).events.length, 0, '语音任务开启时不应再打开桌宠对话');
+
+    // 4.7 客户端在唤醒反应播完后请求切「我在听」；没有桌宠时如实回报原因。
+    const listening = await fetch(base + '/dsh-pet-extend/api/voice/listen', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: '我在听' }),
+    });
+    assert.equal(listening.status, 400);
+    assert.equal((await listening.json()).reason, 'no-pet');
+    // 听命令期间宿主会抑制唤醒反应；这个窗口必须能开、也必须能关，
+    // 否则下一次唤醒会被静默掉（表现就是「唤醒反应没了」）。
+    const duringListen = await (await fetch(base + '/dsh-pet-extend/api/voice/status')).json();
+    assert.equal(duringListen.voiceTask.listening, true, '开始听后应进入抑制窗口');
+    // 收音一结束就切到「识别中」：状态不能停在「正在听命令」，也不能一直占着窗口。
+    await fetch(base + '/dsh-pet-extend/api/voice/transcribing', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ms: 2000 }),
+    });
+    const duringWork = await (await fetch(base + '/dsh-pet-extend/api/voice/status')).json();
+    assert.equal(duringWork.voiceTask.listening, false, '进入识别阶段后应解除抑制窗口');
+    assert.equal(duringWork.voiceTask.transcribing, true, '应显示「识别中」');
+    const reported = await fetch(base + '/dsh-pet-extend/api/voice/result', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: true, text: '把登录页改成暗色', mode: 'draft', target: 'new', landed: true }),
+    }).then((res) => res.json());
+    assert.equal(reported.ok, true);
+    assert.equal('bubble' in reported, false, '识别结果不应再弹桌宠气泡');
+    const voiceStatus = await (await fetch(base + '/dsh-pet-extend/api/voice/status')).json();
+    assert.equal(voiceStatus.voiceTask.stats.listen, 1, '开始听命令应计入诊断');
+    assert.equal(voiceStatus.voiceTask.stats.transcribed, 1);
+    assert.equal(voiceStatus.voiceTask.stats.landed, 1);
+    assert.equal(voiceStatus.voiceTask.last.text, '把登录页改成暗色');
+    assert.equal(voiceStatus.voiceTask.listening, false, '命令有结局后必须解除抑制窗口');
+    assert.equal(voiceStatus.voiceTask.transcribing, false, '有结局后不应再显示识别中');
+
+    // 4.8 朗读失败要能在设置页诊断里看到（dsh-pet 云端音色缺 key 时常见）。
+    await fetch(base + '/dsh-pet-extend/api/voice/speak-failed', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ voice: 'deepseek/stella', reason: 'generate-error' }),
+    });
+    const speakStatus = await (await fetch(base + '/dsh-pet-extend/api/voice/status')).json();
+    assert.equal(speakStatus.voiceTask.speakFailure.voice, 'deepseek/stella');
+    assert.equal(speakStatus.voiceTask.speakFailure.reason, 'generate-error');
+
     // 5. 换成别人的声纹向量：命中关键词但被拒绝。
     fake.state.vector = [0, 1, 0, 0];
     fake.state.hit = false;
@@ -1196,7 +1265,15 @@ async function checkWakeReaction() {
       res.end(JSON.stringify(body));
     };
     if (url.pathname === '/dsh-pet-7340/config' && req.method === 'GET') {
-      send({ main: { pets: [{ id: 'pet-1', name: '肥鱼', display: 'desktop' }, { id: 'pet-2', name: '喵', display: 'none' }] } });
+      // dsh-pet 0.4.x 的 /config 是扁平结构（pets 在顶层）——升级后曾因此一只宠物都发现不到。
+      send({
+        pets: [{ id: 'pet-1', name: '肥鱼', display: 'desktop' }, { id: 'pet-2', name: '喵', display: 'none' }],
+        voiceName: 'edge/zh-CN-XiaoyiNeural',
+      });
+      return;
+    }
+    if (url.pathname === '/dsh-pet-7340/voice/voices' && req.method === 'GET') {
+      send({ ok: true, providers: [{ id: 'edge', name: 'Edge', voices: [{ id: 'edge/zh-CN-XiaoyiNeural' }] }] });
       return;
     }
     if (url.pathname === '/dsh-pet-7340/wake' && req.method === 'POST') {
@@ -1310,6 +1387,346 @@ async function checkVoiceprintFocus() {
   assert.equal(focusSegment(short, 16000 * 2).length, 8000, '不足一段时应原样返回');
 }
 
+/** dsh-pet /config 两种结构都要能发现宠物：扁平（0.4.x 起）与按条目分组（旧版）。 */
+async function checkPetTargetsUnit() {
+  const { collectPetTargets } = await import(new URL('./lib/index.js?pet-targets=1', ROOT).href);
+  // 扁平：pets 在顶层（升级 dsh-pet 后就是这个结构，认不出来 = 唤醒没气泡没动画）
+  assert.deepEqual(
+    collectPetTargets({ pets: [{ id: 'main', display: 'desktop' }, { id: 'x' }], voiceName: 'edge/zh-CN-XiaoyiNeural' }),
+    [{ id: 'main', display: 'desktop' }, { id: 'x', display: 'both' }],
+  );
+  // 旧版：按条目分组
+  assert.deepEqual(
+    collectPetTargets({ main: { pets: [{ id: 'pet-1', display: 'web' }] }, other: { pets: [{ id: 'pet-2', display: 'desktop' }] } }),
+    [{ id: 'pet-1', display: 'web' }, { id: 'pet-2', display: 'desktop' }],
+  );
+  // 同一只宠物重复出现只保留一条
+  assert.deepEqual(collectPetTargets({ pets: [{ id: 'dup' }], main: { pets: [{ id: 'dup' }] } }), [{ id: 'dup', display: 'both' }]);
+  assert.deepEqual(collectPetTargets(null), []);
+}
+
+/** 语音任务端点检测：说完 / 没开口 / 太短 / 上限四条出口，以及黑名单降级判定。 */
+async function checkVoiceEndpoint() {
+  browserStubs();
+  await import(new URL('./lib/client.js?voice-endpoint=1', ROOT).href);
+  const plugin = globalThis.__loaded.factory();
+  const {
+    createEndpointDetector, rmsOf, KWS_CHUNK_MS, blockedByKeywords, PREROLL_MAX, pickDshPetVoiceId, pickEdgeFallback,
+    stripReactionText, stripWakeWordPrefix,
+  } = plugin._internals;
+  assert.equal(KWS_CHUNK_MS, 100, '一块 PCM 应为 100ms');
+  assert.ok(PREROLL_MAX >= 8, '预录环形缓冲至少要能存 800ms');
+
+  const quiet = new Float32Array(1600);
+  const speech = new Float32Array(1600).fill(0.2);
+  assert.equal(rmsOf(quiet), 0);
+  assert.ok(rmsOf(speech) > 0.19, 'RMS 口径不对');
+
+  // 1. 一直没开口：2 秒后静默放弃（不再等，也不弹出「没听清」）。
+  const silent = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000 });
+  let verdict = null;
+  for (let i = 0; i < 25 && !verdict; i += 1) verdict = silent.push(rmsOf(quiet));
+  assert.equal(verdict, 'no-speech');
+
+  // 2. 说完一句再静音 2 秒 → 截断去识别。
+  const talk = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000 });
+  for (let i = 0; i < 5; i += 1) assert.equal(talk.push(rmsOf(speech)), null, '说话期间不应结束');
+  verdict = null;
+  for (let i = 0; i < 20 && !verdict; i += 1) verdict = talk.push(rmsOf(quiet));
+  assert.equal(verdict, 'silence');
+
+  // 3. 只响了一下：有效语音太短，宁可放弃也不把噪声当命令。
+  const blip = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000 });
+  blip.push(rmsOf(speech));
+  verdict = null;
+  for (let i = 0; i < 25 && !verdict; i += 1) verdict = blip.push(rmsOf(quiet));
+  assert.equal(verdict, 'too-short');
+
+  // 4. 一直在说话：安全上限兜底。
+  const endless = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000, maxMs: 1000 });
+  verdict = null;
+  for (let i = 0; i < 15 && !verdict; i += 1) verdict = endless.push(rmsOf(speech));
+  assert.equal(verdict, 'max');
+
+  // 5. 稳定底噪不应被当成开口（安静房间里的电流声）。
+  const hum = createEndpointDetector({ noSpeechMs: 2000 });
+  verdict = null;
+  const humChunk = new Float32Array(1600).fill(0.01);
+  for (let i = 0; i < 25 && !verdict; i += 1) verdict = hum.push(rmsOf(humChunk));
+  assert.equal(verdict, 'no-speech');
+
+  // 6. 黑名单：auto 模式命中危险动作要降级成草稿。
+  assert.equal(blockedByKeywords('帮我把仓库 push 上去', '删除,push,发布'), 'push');
+  assert.equal(blockedByKeywords('把 README 的标题改一下', '删除,push,发布'), '');
+
+  // 7. dsh-pet 新版的音色是「限定 id」：老配置里的裸名要补成 provider/voice，
+  //    否则 /voice/speak 直接 bad-request，表现为「有动画没声音」。
+  const catalog = {
+    providers: [
+      { id: 'edge', voices: [{ id: 'edge/zh-CN-XiaoyiNeural' }, { id: 'edge/zh-CN-YunxiNeural' }] },
+      { id: 'deepseek-tts', voices: [{ id: 'deepseek-tts/auto' }] },
+    ],
+  };
+  assert.equal(pickDshPetVoiceId('zh-CN-XiaoyiNeural', catalog), 'edge/zh-CN-XiaoyiNeural');
+  assert.equal(pickDshPetVoiceId('zh-CN-YunxiNeural', catalog), 'edge/zh-CN-YunxiNeural');
+  assert.equal(pickDshPetVoiceId('deepseek-tts/auto', catalog), 'deepseek-tts/auto', '限定 id 应原样透传');
+  assert.equal(pickDshPetVoiceId('not-a-voice', catalog), '', '目录里没有就别瞎传');
+  assert.equal(pickDshPetVoiceId('zh-CN-XiaoyiNeural', null), 'zh-CN-XiaoyiNeural', '旧版没有目录，原样透传');
+  assert.equal(pickDshPetVoiceId('', catalog), '');
+
+  // 8. 配置的音色整体不可用（云端缺 key）时，用 edge 音色兜底，别让唤醒反应彻底静音。
+  assert.equal(pickEdgeFallback(catalog, 'deepseek-tts/auto'), 'edge/zh-CN-XiaoyiNeural');
+  assert.equal(pickEdgeFallback(catalog, 'edge/zh-CN-XiaoyiNeural'), '', '已经是 edge 默认音色就不重试');
+  assert.equal(pickEdgeFallback(null, 'x'), '', '没有目录就没有备选');
+
+  // 10. 收音与朗读并行 + 预录带唤醒词尾巴：转写结果要能把这两段都剥掉。
+  assert.equal(stripReactionText('我在听，帮我把标题改一下', '我在听'), '帮我把标题改一下');
+  assert.equal(stripReactionText('我在。把首页改暗色', '我在\n你好'), '把首页改暗色');
+  assert.equal(stripReactionText('把标题改一下', '我在听'), '把标题改一下', '没录到回应就别动');
+  assert.equal(stripReactionText('我在听', '我在听'), '', '只录到回应 → 空命令');
+  assert.equal(stripReactionText('一二三四五六我在听', '我在听'), '一二三四五六我在听', '靠后的匹配不剥，避免误删');
+  assert.equal(stripWakeWordPrefix('大肥鱼帮我把标题改一下', ['大肥鱼']), '帮我把标题改一下');
+  assert.equal(stripWakeWordPrefix('肥鱼，打开设置', ['大肥鱼']), '打开设置', '只念到尾巴也要剥');
+  assert.equal(stripWakeWordPrefix('帮我把标题改一下', ['大肥鱼']), '帮我把标题改一下');
+  assert.equal(stripWakeWordPrefix('鱼', ['大肥鱼']), '鱼', '单字不剥，避免误伤');
+
+  // 9. 真实底噪回归：本机 last-listen.wav 实测底噪 RMS 0.023~0.033、说话 0.048~0.072。
+  //    旧实现把绝对下限写成 0.02（比底噪还低），于是每块都算「有声」、静音计数永远为 0，
+  //    只能等到 60 秒上限——这就是「说完判定要等很久 / 一直卡在听命令」的根因。
+  const ambient = [
+    0.0298, 0.0286, 0.0275, 0.0307, 0.0293, 0.0282, 0.0278, 0.0279, 0.0291, 0.0312,
+    0.0244, 0.0311, 0.0305, 0.0334, 0.0241, 0.0287, 0.0257, 0.0276, 0.0289, 0.0234,
+  ];
+  const speechChunks = [0.0724, 0.0605, 0.048, 0.053, 0.0532, 0.037];
+  const silenceProfile = (n) => (n < 10 || n >= 10 + speechChunks.length
+    ? ambient[n % ambient.length]
+    : speechChunks[n - 10]);
+
+  // 9.1 一直只有底噪：应在 ≈2 秒判 no-speech，而不是拖到 60 秒
+  const idle = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000, seedRms: ambient.slice(0, 3) });
+  let idleVerdict = null;
+  let idleAt = 0;
+  for (let n = 0; n < 40 && !idleVerdict; n += 1) {
+    idleVerdict = idle.push(ambient[n % ambient.length]);
+    if (idleVerdict) idleAt = (n + 1) * 100;
+  }
+  assert.equal(idleVerdict, 'no-speech', '纯底噪应在 2 秒时放弃');
+  assert.ok(idleAt <= 2200, '放弃时间应≈2 秒，实际 ' + idleAt + 'ms');
+
+  // 9.2 1 秒底噪 → 0.6 秒说话 → 底噪：应在说完约 2 秒时截断
+  const spoken = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000, seedRms: ambient.slice(0, 3) });
+  let spokenVerdict = null;
+  let cutAt = 0;
+  for (let n = 0; n < 80 && !spokenVerdict; n += 1) {
+    spokenVerdict = spoken.push(silenceProfile(n));
+    if (spokenVerdict) cutAt = (n + 1) * 100;
+  }
+  assert.equal(spokenVerdict, 'silence', '说完应判定 silence');
+  const speechEndAt = (10 + speechChunks.length) * 100;
+  const silenceWaited = cutAt - speechEndAt;
+  assert.ok(silenceWaited >= 1500 && silenceWaited <= 2600,
+    '应在静音约 2 秒后截断，实际 ' + silenceWaited + 'ms');
+
+  // 9.3 嘈杂环境：底噪很高（0.05~0.06），说话 0.09。若用「绝对安静」判静音会永远等不到，
+  //     必须靠「相对说话峰值」——只要停嘴（能量明显低于刚才说话的水平）就判停。
+  const noisyAmbient = [0.052, 0.055, 0.051, 0.058, 0.054, 0.056, 0.053, 0.057, 0.052, 0.055];
+  const noisySpeech = [0.092, 0.088, 0.09, 0.085, 0.091, 0.087];
+  const noisyProfile = (n) => (n < 10 || n >= 10 + noisySpeech.length
+    ? noisyAmbient[n % noisyAmbient.length]
+    : noisySpeech[n - 10]);
+  const noisy = createEndpointDetector({ noSpeechMs: 2000, silenceMs: 2000, seedRms: noisyAmbient.slice(0, 3) });
+  let noisyVerdict = null;
+  let noisyCut = 0;
+  for (let n = 0; n < 80 && !noisyVerdict; n += 1) {
+    noisyVerdict = noisy.push(noisyProfile(n));
+    if (noisyVerdict) noisyCut = (n + 1) * 100;
+  }
+  assert.equal(noisyVerdict, 'silence', '嘈杂环境也要能在停嘴约 2 秒后截断，不能拖到 60 秒');
+  const noisySpeechEnd = (10 + noisySpeech.length) * 100;
+  assert.ok(noisyCut - noisySpeechEnd >= 1500 && noisyCut - noisySpeechEnd <= 2600,
+    '嘈杂环境静音等待应≈2 秒，实际 ' + (noisyCut - noisySpeechEnd) + 'ms');
+}
+
+/** 语音任务桥：官方 speechToText 缺失/可用/异常三种路径，以及交给 provider 的必须是规范 WAV。 */
+async function checkSpeechBridgeUnit() {
+  const { createSpeechBridge, pcmToWav, MAX_COMMAND_BYTES } = await import(new URL('./lib/speech.js', ROOT).href);
+
+  const wav = pcmToWav(Buffer.alloc(3200));
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(wav.toString('ascii', 8, 12), 'WAVE');
+  assert.equal(wav.readUInt32LE(24), 16000, 'WAV 采样率应为 16kHz');
+  assert.equal(wav.readUInt32LE(40), 3200, 'WAV data 长度应与 PCM 一致');
+  assert.equal(wav.length, 44 + 3200);
+
+  // 1. 未启用官方语音输入 bundle：只能降级，不能抛错。
+  const missing = createSpeechBridge({ getContext: () => ({}) });
+  const summary = missing.summary();
+  assert.equal(summary.available, false);
+  assert.equal(summary.reason, 'speech-service-unavailable');
+  const denied = await missing.transcribePcm(Buffer.alloc(6400));
+  assert.equal(denied.ok, false);
+  assert.equal(denied.reason, 'speech-service-unavailable');
+
+  // 2. 可用：prepared → resolve → transcribe 全链路。
+  const seen = [];
+  const fake = {
+    prepared: [],
+    text: '  帮我把登录页改成暗色  ',
+    snapshot() {
+      return {
+        providers: [{
+          info: { id: 'sensevoice-local', name: 'SenseVoiceSmall', location: 'host-local', languages: ['auto', 'zh'] },
+          preparation: { phase: 'unprepared' },
+        }],
+        selection: { providerId: 'sensevoice-local', language: 'auto' },
+      };
+    },
+    prepare(id) { this.prepared.push(id); },
+    resolve(request) {
+      if (request.language === 'xx') throw new Error('unsupported language');
+      seen.push(request);
+      return { audio: request.audio, language: request.language ?? 'auto', provider: { info: { id: 'sensevoice-local' } } };
+    },
+    async transcribe() { return { text: this.text, audioSeconds: 2.1, inferenceSeconds: 0.4 }; },
+  };
+  const bridge = createSpeechBridge({
+    getContext: () => ({ get: (name) => (name === 'speechToText' ? fake : undefined) }),
+  });
+  assert.equal(bridge.summary().available, true);
+  assert.equal(bridge.summary().phase, 'unprepared');
+  const prepared = bridge.prepare();
+  assert.equal(prepared.started, true, 'unprepared 的 provider 应被预热');
+  assert.deepEqual(fake.prepared, ['sensevoice-local']);
+
+  const ok = await bridge.transcribePcm(Buffer.alloc(32000), { language: 'zh' });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.text, '帮我把登录页改成暗色', '识别结果应去掉首尾空白');
+  assert.equal(ok.seconds, 1, '32000 字节 16k 单声道应为 1 秒');
+  assert.equal(seen[0].language, 'zh');
+  assert.equal(Buffer.from(seen[0].audio.subarray(0, 4)).toString('ascii'), 'RIFF',
+    '交给 provider 的必须是规范 WAV（官方用 validateWave 校验）');
+  assert.equal(bridge.summary().calls, 1);
+
+  // 3. 识别为空：ok=true 但标出 empty-transcript，调用方据此静默放弃。
+  fake.text = '';
+  const empty = await bridge.transcribePcm(Buffer.alloc(32000));
+  assert.equal(empty.ok, true);
+  assert.equal(empty.reason, 'empty-transcript');
+  assert.equal(bridge.summary().lastReason, 'empty-transcript');
+
+  // 4. 语言不被 provider 接受：resolve 抛错也要归一成 JSON 化的失败原因。
+  const badLang = await bridge.transcribePcm(Buffer.alloc(32000), { language: 'xx' });
+  assert.equal(badLang.ok, false);
+  assert.equal(badLang.reason, 'speech-provider-unavailable');
+
+  // 5. 长度护栏：太短不浪费时间，太长不越过官方 4MB/120s 限额。
+  assert.equal((await bridge.transcribePcm(Buffer.alloc(100))).reason, 'audio-too-short');
+  assert.equal((await bridge.transcribePcm(Buffer.alloc(MAX_COMMAND_BYTES + 2))).reason, 'audio-too-long');
+
+  // 6. provider 抛错：不冒泡到 HTTP 层。
+  fake.transcribe = async () => { throw new Error('inference exploded'); };
+  const failed = await bridge.transcribePcm(Buffer.alloc(32000));
+  assert.equal(failed.ok, false);
+  assert.equal(failed.reason, 'transcription-failed');
+  assert.match(failed.message, /inference exploded/);
+  assert.ok(bridge.summary().failures >= 1);
+}
+
+/** 语音任务路由：诊断 / 预热 / 手动识别，以及服务缺失时的降级响应。 */
+async function checkVoiceRoutes() {
+  const { apply } = await import(new URL('./lib/index.js?voice-routes=1', ROOT).href);
+  const dataDir = mkdtempSync(join(tmpdir(), 'dsh-pet-extend-voice-'));
+  const calls = [];
+  const speech = {
+    snapshot: () => ({
+      providers: [{
+        info: { id: 'sensevoice-local', name: 'SenseVoiceSmall', location: 'host-local', languages: ['auto', 'zh'] },
+        preparation: { phase: 'ready' },
+      }],
+      selection: { providerId: 'sensevoice-local', language: 'auto' },
+    }),
+    prepare(id) { calls.push(['prepare', id]); },
+    resolve(request) {
+      calls.push(['resolve', Buffer.from(request.audio.subarray(0, 4)).toString('ascii')]);
+      return { audio: request.audio, language: 'auto', provider: { info: { id: 'sensevoice-local' } } };
+    },
+    async transcribe() { calls.push(['transcribe']); return { text: '把首页标题改成你好', audioSeconds: 1, inferenceSeconds: 0.2 }; },
+  };
+  const routes = [];
+  const ctx = {
+    webServer: { port: 0, register(spec) { routes.push(spec); return () => {}; } },
+    effect: () => () => {},
+    logger: { info() {}, warn() {} },
+    get: (name) => (name === 'speechToText' ? speech : undefined),
+  };
+  apply(ctx, { menu: false, dataDir, kws: { enabled: false } });
+  const server = createServer((req, res) => void routes[0].handler(req, res));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}/dsh-pet-extend`;
+  try {
+    const status = await (await realFetch(base + '/api/voice/status')).json();
+    assert.equal(status.ok, true);
+    assert.equal(status.speech.available, true);
+    assert.equal(status.speech.provider.id, 'sensevoice-local');
+    assert.equal(status.maxSeconds, 100);
+
+    const warmed = await (await realFetch(base + '/api/voice/prepare', { method: 'POST' })).json();
+    assert.equal(warmed.ok, true);
+    assert.equal(warmed.started, false, 'ready 的 provider 不需要再预热');
+    assert.deepEqual(calls, [], 'ready 时不应调用 prepare');
+
+    const command = await realFetch(base + '/api/voice/command?language=zh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: Buffer.alloc(32000),
+    });
+    const body = await command.json();
+    assert.equal(command.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.text, '把首页标题改成你好');
+    assert.deepEqual(calls, [['resolve', 'RIFF'], ['transcribe']]);
+
+    const tooShort = await realFetch(base + '/api/voice/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: Buffer.alloc(200),
+    });
+    assert.equal(tooShort.status, 400);
+    assert.equal((await tooShort.json()).reason, 'audio-too-short');
+
+    // 未装/未启用官方语音输入：503 + 可读原因，而不是 500。
+    const { apply: applyBare } = await import(new URL('./lib/index.js?voice-bare=1', ROOT).href);
+    const bareRoutes = [];
+    const bareCtx = {
+      webServer: { port: 0, register(spec) { bareRoutes.push(spec); return () => {}; } },
+      effect: () => () => {},
+      logger: { info() {}, warn() {} },
+      get: () => undefined,
+    };
+    applyBare(bareCtx, { menu: false, dataDir, kws: { enabled: false } });
+    const bareServer = createServer((req, res) => void bareRoutes[0].handler(req, res));
+    await new Promise((resolve) => bareServer.listen(0, '127.0.0.1', resolve));
+    const bareBase = `http://127.0.0.1:${bareServer.address().port}/dsh-pet-extend`;
+    try {
+      const bareStatus = await (await realFetch(bareBase + '/api/voice/status')).json();
+      assert.equal(bareStatus.speech.available, false);
+      assert.equal(bareStatus.speech.reason, 'speech-service-unavailable');
+      const unavailable = await realFetch(bareBase + '/api/voice/command', {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: Buffer.alloc(32000),
+      });
+      assert.equal(unavailable.status, 503);
+      assert.equal((await unavailable.json()).reason, 'speech-service-unavailable');
+    } finally {
+      bareServer.close();
+    }
+  } finally {
+    server.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
 checkSyntax();
 await checkRoute();
 await checkMenuHost();
@@ -1326,4 +1743,8 @@ await checkClientWakeAudio();
 await checkClientWakeAudio(true); // 第一档约束抛 NotFoundError 时降级重试
 await checkClientWakeAudio(false, false); // 长轮询事件完全失效时，仍应从 audio 响应打开对话
 await checkClientSettingsSection();
+await checkSpeechBridgeUnit();
+await checkVoiceRoutes();
+await checkVoiceEndpoint();
+await checkPetTargetsUnit();
 console.log('dsh-pet-extend smoke test: OK');

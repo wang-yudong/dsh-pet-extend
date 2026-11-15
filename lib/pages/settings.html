@@ -43,18 +43,20 @@
   .card { border: 1px solid var(--border-l2); border-radius: var(--radius); padding: 12px 14px;
     background: var(--bg-layer-2); display: flex; flex-direction: column; gap: 2px; }
   .card h2 { margin: 0 0 6px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+
   .step { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px;
     border-radius: 6px; background: var(--active); color: var(--label-secondary); font-size: 11px; font-weight: 600; }
   .hint { color: var(--label-tertiary); font-size: 12px; line-height: 18px; margin: 2px 0 8px; }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
   .row.between { justify-content: space-between; }
   label { color: var(--label-secondary); font-size: 12px; }
-  input[type="text"], input[type="number"], textarea {
+  input[type="text"], input[type="number"], textarea, select {
     width: 100%; min-height: 28px; padding: 4px 10px; border-radius: var(--radius-sm);
     border: 1px solid var(--border-l2); background: var(--bg-layer-1); color: var(--label-primary);
     font: inherit; outline: none;
   }
-  input:focus, textarea:focus { border-color: var(--accent); }
+  select { width: auto; min-width: 130px; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   textarea { resize: vertical; min-height: 66px; line-height: 18px; }
   input[type="range"] { width: 100%; accent-color: var(--accent); }
   input[type="number"] { width: 110px; }
@@ -88,6 +90,15 @@
   body.embed header { margin-bottom: 12px; }
   body.embed .card { background: transparent; }
   body.embed footer { display: none; }
+  /* 保存条贴底常驻，必须是不透明底色：嵌进设置分区时卡片默认透明，
+     滚动时下面的内容会透上来，看着很乱。 */
+  .savebar {
+    position: sticky; bottom: 0; z-index: 3;
+    background: var(--bg-layer-1, #fff);
+    border-color: var(--accent);
+    box-shadow: 0 -8px 20px #0000001a;
+  }
+  body.embed .card.savebar { background: var(--bg-layer-1, #fff); }
 </style>
 </head>
 <body>
@@ -141,20 +152,6 @@
     </section>
 
     <section class="card">
-      <h2><span class="step">试</span>声纹回放与唤醒测试</h2>
-      <p class="hint">下面逐条列出已录入的声纹，每条都能单独回放，用来对比录入时和实际喊的时候音色/音量是否一致（旧版录入只存了特征向量，需重新录入才有录音）。按住按钮念唤醒词，松开后走与正式监听完全相同的 KWS + 声纹链路，但不会真的打开对话；测完可回放「引擎刚才听到的声音」。</p>
-      <div id="voiceprintList" class="msg">读取中…</div>
-      <div class="row">
-        <button class="primary" id="holdTestBtn">按住录音测试唤醒</button>
-        <button class="ghost" id="replayTestBtn">回放刚才的录音</button>
-        <button class="ghost" id="replayListenBtn">回放最近监听</button>
-        <span class="pill" id="testState">待机</span>
-      </div>
-      <div class="bar"><i id="testBar"></i></div>
-      <div class="msg" id="testMsg">按住按钮念唤醒词，松开后显示是否检出、声纹分数、音频电平与是否激活。</div>
-    </section>
-
-    <section class="card">
       <h2><span class="step">2</span>唤醒词</h2>
       <p class="hint">默认「大肥鱼」。支持中文自定义，多个词用逗号或换行分隔；会自动转成模型需要的拼音 token。实测模型自带词表全是 4 字/叠词，2~3 字短词对语速和发音很敏感，喊了不触发时优先换成四字或叠词。</p>
       <input type="text" id="wakeWords" placeholder="大肥鱼">
@@ -182,10 +179,6 @@
       <div class="row between" style="margin-top:14px">
         <label>唤醒冷却 <input type="number" id="cooldownMs" step="100" min="0" max="60000"> ms</label>
       </div>
-      <div class="row" style="margin-top:18px">
-        <button class="primary" id="saveBtn">保存设置</button>
-        <span class="msg" id="saveMsg"></span>
-      </div>
     </section>
 
     <section class="card">
@@ -212,14 +205,85 @@
       </div>
     </section>
 
+    <section class="card">
+      <h2><span class="step">语</span>语音任务</h2>
+      <p class="hint">唤醒反应说完之后，继续听一句命令，用 DSH 官方语音识别（SenseVoice，本机推理）转成文字，直接写进 DSH 会话（默认写进当前会话的草稿，你按回车才开始跑）。识别结果不朗读、也不弹桌宠气泡。识别服务来自官方「语音输入」插件，未启用时本功能自动降级为只打开桌宠对话。</p>
+      <div class="row between">
+        <div><strong>启用语音任务</strong><div class="hint" style="margin:2px 0 0">开启后唤醒不再打开桌宠对话，改为听一句命令</div></div>
+        <input type="checkbox" id="voiceTaskEnabled" aria-label="启用语音任务">
+      </div>
+      <div class="row between" style="margin-top:14px">
+        <label>识别完成后 <select id="voiceTaskMode">
+          <option value="draft">先填草稿（默认）</option>
+          <option value="auto">直接发送</option>
+        </select></label>
+        <label>命令写到 <select id="voiceTaskTarget">
+          <option value="current">当前会话（默认）</option>
+          <option value="new">新会话</option>
+        </select></label>
+      </div>
+      <div class="row between" style="margin-top:12px">
+        <label>说完判定 <input type="number" id="voiceTaskSilenceMs" step="100" min="500" max="10000"> ms 静音</label>
+        <label>没开口放弃 <input type="number" id="voiceTaskNoSpeechMs" step="100" min="500" max="15000"> ms</label>
+      </div>
+      <div class="row between" style="margin-top:12px">
+        <label>安全上限 <input type="number" id="voiceTaskMaxMs" step="1000" min="3000" max="100000"> ms</label>
+        <label>识别语言 <select id="voiceTaskLanguage">
+          <option value="auto">自动</option>
+          <option value="zh">中文</option>
+          <option value="en">英文</option>
+          <option value="yue">粤语</option>
+          <option value="ja">日语</option>
+          <option value="ko">韩语</option>
+        </select></label>
+      </div>
+      <label class="hint" style="margin-top:14px;display:block">「直接发送」时的危险动作黑名单（逗号分隔，命中就改成先填草稿）</label>
+      <input type="text" id="voiceTaskBlockedKeywords" maxlength="500" placeholder="删除,重置,发布,push">
+      <label class="hint" style="margin-top:10px;display:block">听命令时的桌宠气泡（只显示，不朗读）</label>
+      <input type="text" id="voiceTaskListenText" maxlength="60" placeholder="我在听">
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="voicePrepareBtn">预热识别引擎</button>
+        <span class="msg" id="voiceMsg"></span>
+      </div>
+      <div class="hint" id="voiceState" style="margin-top:10px">—</div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">试</span>声纹回放与唤醒测试</h2>
+      <p class="hint">下面逐条列出已录入的声纹，每条都能单独回放，用来对比录入时和实际喊的时候音色/音量是否一致（旧版录入只存了特征向量，需重新录入才有录音）。按住按钮念唤醒词，松开后走与正式监听完全相同的 KWS + 声纹链路，但不会真的打开对话；测完可回放「引擎刚才听到的声音」。</p>
+      <div id="voiceprintList" class="msg">读取中…</div>
+      <div class="row">
+        <button class="primary" id="holdTestBtn">按住录音测试唤醒</button>
+        <button class="ghost" id="replayTestBtn">回放刚才的录音</button>
+        <button class="ghost" id="replayListenBtn">回放最近监听</button>
+        <span class="pill" id="testState">待机</span>
+      </div>
+      <div class="bar"><i id="testBar"></i></div>
+      <div class="msg" id="testMsg">按住按钮念唤醒词，松开后显示是否检出、声纹分数、音频电平与是否激活。</div>
+    </section>
+
     <section class="card wide">
       <h2><span class="step">4</span>使用方式</h2>
-      <p class="hint">本页位于 DSH 设置 →「桌宠扩展设置」。保存并启用后，DSH 客户端会请求麦克风权限；首次使用若被拦截，点击或按键一下即可自动重试。唤醒成功后会打开 dsh-pet 原本的「桌宠对话」标签。</p>
+      <p class="hint">本页位于 DSH 设置 →「桌宠扩展设置」。保存并启用后，DSH 客户端会请求麦克风权限；首次使用若被拦截，点击或按键一下即可自动重试。未开启语音任务时，唤醒会打开 dsh-pet 原本的「桌宠对话」标签；开启后改为听一句命令并落到 DSH 会话。</p>
       <div class="row">
         <span class="pill">KWS：sherpa-onnx Zipformer int8</span>
         <span class="pill">声纹：3D-Speaker CAM++ 中文</span>
+        <span class="pill">识别：DSH 官方 SenseVoice（本机）</span>
         <span class="pill">音频：16kHz 单声道，仅本机 HTTP</span>
       </div>
+    </section>
+
+    <section class="card wide savebar">
+      <div class="row between">
+        <div>
+          <strong>保存设置</strong>
+          <div class="hint" style="margin:2px 0 0">所有改动都在这一处生效；保存后会重新生成唤醒词并重建唤醒引擎，不需要重启 DSH。</div>
+        </div>
+        <div class="row" style="margin:0">
+          <button class="primary" id="saveBtn">保存设置</button>
+        </div>
+      </div>
+      <div class="msg" id="saveMsg"></div>
     </section>
   </div>
   <footer>dsh-pet-extend · 语音唤醒与声纹数据均在本机处理</footer>
@@ -354,6 +418,15 @@
     $('reactDuration').value = s.reactDuration || 8000;
     $('reactText').value = s.reactText || '';
     $('reactPetId').value = s.reactPetId || '';
+    $('voiceTaskEnabled').checked = s.voiceTaskEnabled === true;
+    $('voiceTaskMode').value = s.voiceTaskMode === 'auto' ? 'auto' : 'draft';
+    $('voiceTaskTarget').value = s.voiceTaskTarget === 'current' ? 'current' : 'new';
+    $('voiceTaskSilenceMs').value = s.voiceTaskSilenceMs;
+    $('voiceTaskNoSpeechMs').value = s.voiceTaskNoSpeechMs;
+    $('voiceTaskMaxMs').value = s.voiceTaskMaxMs;
+    $('voiceTaskLanguage').value = s.voiceTaskLanguage || 'auto';
+    $('voiceTaskBlockedKeywords').value = s.voiceTaskBlockedKeywords || '';
+    $('voiceTaskListenText').value = s.voiceTaskListenText || '';
     var vp = data.voiceprint || {};
     renderVoiceprintList(vp);
     $('enabled').checked = Boolean(s.enabled);
@@ -503,6 +576,60 @@
     }
     message('diagText', diag.join(' / '), (menu.lastOpenResult && !menu.lastOpenResult.ok)
       || (reaction && !reaction.ok) ? 'err' : '');
+
+    // 语音任务：官方识别服务是否可用 + 进入/放弃/识别/写入会话的计数 + 最近一次结果。
+    var speechInfo = data.speech || null;
+    var task = data.voiceTask || null;
+    if (speechInfo || task) {
+      var parts = [];
+      if (speechInfo) {
+        if (speechInfo.available) {
+          var provider = speechInfo.provider || {};
+          parts.push('<span class="pill ok">识别就绪</span> ' +
+            esc(provider.name || provider.id || '') +
+            (speechInfo.phase ? ' · ' + esc(speechInfo.phase) : '') +
+            (speechInfo.language ? ' · ' + esc(speechInfo.language) : ''));
+        } else {
+          parts.push('<span class="pill bad">识别不可用</span> ' + esc(speechInfo.reason || '') +
+            (speechInfo.hint ? '<div class="hint" style="margin:4px 0 0">' + esc(speechInfo.hint) + '</div>' : ''));
+        }
+      }
+      if (task) {
+        var stats = task.stats || {};
+        parts.push('进入 ' + (stats.listen || 0) + ' · 重复命中 ' + (stats.repeat || 0) +
+          ' · 没开口 ' + (stats.noSpeech || 0) + ' · 识别 ' + (stats.transcribed || 0) +
+          ' · 失败 ' + (stats.failed || 0) + ' · 写入 ' + (stats.landed || 0) +
+          (task.listening ? ' · <span class="pill">正在听命令…</span>' : '') +
+          (task.transcribing
+            ? ' · <span class="pill">识别中… ' + (Math.round((task.transcribingFor || 0) / 100) / 10) + 's</span>'
+            : '') +
+          (stats.timeouts ? ' · <span class="pill bad">识别超时 ' + stats.timeouts + '</span>' : ''));
+        // 朗读失败大多不是本插件的问题：dsh-pet 选中的云端音色缺 key 时 /voice/speak 直接失败。
+        var speakFailure = task.speakFailure;
+        if (speakFailure && speakFailure.at) {
+          parts.push('<span class="pill bad">朗读失败</span> ' + esc(speakFailure.voice || '默认音色') +
+            ' · ' + esc(speakFailure.reason || '') +
+            (speakFailure.fallback
+              ? '（已改用 ' + esc(speakFailure.fallback) + ' 朗读）'
+              : '（去 dsh-pet 设置换个音色，或补上对应 API key）') +
+            ' · ' + Math.max(0, Math.round((Date.now() - speakFailure.at) / 1000)) + 's前');
+        }
+        var lastTask = task.last;
+        if (lastTask && lastTask.at) {
+          var outcome = lastTask.ok === false
+            ? '未完成 · ' + esc(lastTask.reason || '')
+            : (lastTask.landed === false ? '已识别，但没写进会话 · ' + esc(lastTask.reason || '') : '已写进会话');
+          parts.push('最近一次 ' + esc(outcome) +
+            (lastTask.text ? '：「' + esc(lastTask.text) + '」' : '') +
+            (lastTask.ms ? ' · 录音 ' + Math.round(lastTask.ms / 100) / 10 + 's' : '') +
+            (lastTask.inferMs ? ' · 识别 ' + lastTask.inferMs + 'ms' : ''));
+        }
+        if (speechInfo && speechInfo.last && speechInfo.last.text) {
+          parts.push('最近识别「' + esc(speechInfo.last.text) + '」');
+        }
+      }
+      $('voiceState').innerHTML = parts.join('<br>');
+    }
   }
 
   // 定时轮询只刷新状态，避免覆盖用户正在编辑的唤醒词/阈值。
@@ -528,6 +655,15 @@
       reactDuration: Number($('reactDuration').value),
       reactText: $('reactText').value,
       reactPetId: $('reactPetId').value,
+      voiceTaskEnabled: $('voiceTaskEnabled').checked,
+      voiceTaskMode: $('voiceTaskMode').value,
+      voiceTaskTarget: $('voiceTaskTarget').value,
+      voiceTaskSilenceMs: Number($('voiceTaskSilenceMs').value),
+      voiceTaskNoSpeechMs: Number($('voiceTaskNoSpeechMs').value),
+      voiceTaskMaxMs: Number($('voiceTaskMaxMs').value),
+      voiceTaskLanguage: $('voiceTaskLanguage').value,
+      voiceTaskBlockedKeywords: $('voiceTaskBlockedKeywords').value,
+      voiceTaskListenText: $('voiceTaskListenText').value,
     };
   }
 
@@ -562,6 +698,23 @@
       }
       refresh();
     }).catch(function (error) { button.disabled = false; message('reactMsg', String(error), 'err'); });
+  });
+  $('voicePrepareBtn').addEventListener('click', function () {
+    var button = this;
+    if (button.disabled) return;
+    button.disabled = true;
+    message('voiceMsg', '正在预热…');
+    request('api/voice/prepare', { method: 'POST' }).then(function (data) {
+      button.disabled = false;
+      if (data && data.ok) {
+        message('voiceMsg', data.started
+          ? '已开始加载识别模型：' + esc(data.providerId || '')
+          : '识别模型已就绪：' + esc(data.providerId || ''), 'ok');
+      } else {
+        message('voiceMsg', (data && (data.message || data.reason)) || '预热失败', 'err');
+      }
+      refresh(false);
+    }).catch(function (error) { button.disabled = false; message('voiceMsg', String(error), 'err'); });
   });
   $('retryBtn').addEventListener('click', function () {
     var button = this;

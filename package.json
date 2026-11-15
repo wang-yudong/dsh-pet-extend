@@ -1,7 +1,7 @@
 {
   "name": "dsh-pet-extend",
-  "version": "0.3.0",
-  "description": "dsh-pet 扩展：右键菜单打开桌宠对话；自带中文 KWS 与声纹模型的设置页，可录入声纹、自定义唤醒词（默认大肥鱼）并用 sherpa-onnx 语音唤醒 pet-chat。",
+  "version": "0.4.0",
+  "description": "dsh-pet 扩展：右键菜单打开桌宠对话；自带中文 KWS 与声纹模型的设置页，可录入声纹、自定义唤醒词（默认大肥鱼）并用 sherpa-onnx 语音唤醒；唤醒后可继续说一句命令，用 DSH 官方 SenseVoice 转成文字落到 DSH 会话。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/wang-yudong/dsh-pet-extend.git"
@@ -40,8 +40,8 @@
     "install:deps": "node scripts/install-models.mjs --deps"
   },
   "optionalDependencies": {
-    "sherpa-onnx-node": "^2.0.1",
-    "pinyin-pro": "^3.29.5"
+    "pinyin-pro": "^3.29.5",
+    "sherpa-onnx-node": "^2.0.1"
   },
   "license": "Apache-2.0",
   "dsh": {
@@ -49,7 +49,9 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": ["@deepseek-ai/dsh-client-connection"],
+      "inject": [
+        "@deepseek-ai/dsh-client-connection"
+      ],
       "platform": "web"
     }
   },
@@ -69,6 +71,8 @@
     "模型补装：npm run install:models（--force 可强制重下）；设置页「重新安装模型」等价于调用 /api/kws/model/install。",
     "声纹逐条回放与按住测试：设置页把 voiceprint.json 里最多 MAX_ENROLLMENTS(3) 条 embedding 逐条列出，每条都有独立「播放」按钮。每次录入成功时把这次的 3 秒 16kHz Int16LE PCM 原样包成独立 WAV（voiceprint-<时间戳>.wav），用 voiceprint-audio.json 索引与 embedding 样本槽位对齐；GET /api/kws/voiceprint/audio?index=N 回放指定条，省略 index 回放最近一条，旧版录入只有 embedding 没录音的条目标为「无录音」且接口返回 404 + no-enrollment-audio；voiceprint.wav 是上一版单文件格式的兼容数据；清除声纹时所有录音与索引一并删除，接口不暴露服务端文件路径。按住录音在设置页用与录入相同的 realm/重采样采集原始 PCM（同样不做任何增益），松开后 POST /api/kws/test：开测试会话走与正式监听相同的逐块流式 KWS 解码 + 声纹校验。实测（真实 int8 模型 + 中文 TTS，三种语速 × 尾部静音/前置静音/丢块/幅度 ×0.25）30/30 全部检出，排除了上传、重采样、丢块、电平、尾部截断。后来直接读取用户本机 last-test.wav 才定位真正原因：1.76 秒录音的能量曲线只有「前 10 块静音 + 2 块尖峰 + 3 块衰减 + 其后全静音」，即只有 0.2~0.4 秒有声音，3 次录入录音同样只剩 2~3 块有效声音；把完整 TTS 削成只剩 2~4 块后真实 KWS 也 100% 检不出，定量复现。根因是设置页 openMicrophone() 首选约束写成 echoCancellation:true / noiseSuppression:true，而 client.js 正式监听是全关——Windows 部分驱动开启这两项会把持续人声当回声/噪声压掉，只剩开头一小段。后续复测又发现更深一层：`{ echoCancellation: false }` 在 WebRTC 里只是 ideal，设备可以忽略并继续开启（这三项默认值本身就是 true）。用户再次复测的 last-test.wav 每块峰值是「前 9 块稳定 0.03 底噪 + 2 块 0.9 尖峰 + 3 块衰减 + 其余 0.03」，两次录入录音形状完全相同，说明降噪把持续人声压到底噪、只放行强瞬态，KWS 始终只拿到 0.5 秒残片。现已把设置页与 client.js 的首选约束都改成 `{ exact: false }` 强制关闭（不支持则逐级降级），录音时用 track.getSettings() 读取实际生效值并在界面显示「回声消除 开/关 · 降噪 开/关 · 自动增益 开/关」，仍为开时直接提示去 Windows 声音设置关闭该设备的「音频增强」；并在音频回调真正开始后才提示用户说话；测试接口因此回报音频体检 peak/rms/clippedRatio/silentBlocks/voiceBlocks、当前词表与 boost/阈值，并保存刚才那段原始音频供 GET /api/kws/test/audio 回放对比。第一遍没检出时自动补 0.5 秒尾部静音重放一次（对齐正式监听里说完自然停顿的状态），用 tailRetry/detectedAfterTail 如实回报，UI 会提示「说完别立刻松手」。测试会话预填 3 秒静音上下文以对齐真实监听的滚动缓冲（否则对齐段不足 0.5 秒会被判 audio-too-short），且不计入 detections/triggers/audioChunks 等真实诊断、不受冷却限制、不调用 onDetect，因此不会打开对话或朗读。测试接口另回报 totalBlocks/voiceBlocks/blockFloor/callbacks（音频回调次数，用来区分「AudioContext 被节流」与「驱动把声音吃掉」）；有效语音块用 max(0.02, 峰值×0.1) 的相对阈值判定——底噪常在 0.03，用绝对 0.01 会把底噪全算成有声、把「只有 0.5 秒真语音」显示成 100% 有效；占比 <35% 时 UI 直接提示「声音被采集端吃掉或说得太短」；/api/kws/level 与设置页「麦克风电平」新增 voiceRatio（最近约 2 秒有效语音块占比的指数移动平均），用同一个指标判断正式监听链路。设置页另可「回放最近监听」：服务端保留正式监听最近 6 秒原始音频，GET /api/kws/listen-audio 返回 WAV，用于对比「按住测试」与「真实监听」收到的声音是否一致。",
     "诊断：/api/kws/status 与 /api/kws/settings 的 runtime 字段会主动探测 sherpa-onnx-node 能否加载、声纹模型路径与 KWS 词表路径，设置页「模型文件」「声纹」栏显示具体错误；GET /api/status 查看菜单与端口。POST /api/kws/retry 会重新读取磁盘上的设置/词表/声纹、无条件重建 KeywordSpotter（即使当前 ready），await 重建真正结束后回报 ok/state/restarts/keywords，失败则 503 带 reason；旧实现 fire-and-forget 且无条件 200，设置页立刻刷新时状态毫无变化，看起来像「重新初始化没反应」。status 里的 restarts 可用来确认重建真的发生过。注意它只重建 native 语音引擎，不会重载插件 JS 代码，修改插件源码后必须重启 DSH。设置页诊断在「解码数>100 且检测 0」时提示换成四字/叠词、放慢发音，在「检测>0 且触发 0」时提示看声纹门槛与冷却。声纹录入异常一律返回 JSON 400（带 reason/message）并写入 DSH 日志，不会再让 DSH 返回非 JSON 400 使前端只显示「HTTP 400」。",
-    "依赖：菜单功能只需要已安装的 dsh-pet；语音唤醒还需要可选的 sherpa-onnx-node；不修改 dsh-pet 源码与 DSH 内核。"
+    "语音任务：唤醒反应说完后继续听一句命令（复用 KWS 已开的麦克风流，不额外 getUserMedia），客户端用能量端点检测截断（说完静音 voiceTaskSilenceMs 默认 2000ms；开始听后 noSpeechMs 默认 2000ms 没开口就静默放弃、不朗读不提示），把原始 16k Int16 PCM 交给宿主 /api/voice/command，宿主用 ctx.speechToText（官方 SenseVoice，本机推理）转成文字，再按 voiceTaskMode(draft|auto) × voiceTaskTarget(current|new，默认 current 接续当前会话) 落地：draft+current 走 conversation.input.activity 槽位拿到的 inputActions.insertText（插到光标处，不覆盖用户正在写的草稿）、auto+current 用 setDraft 整条替换后 submit（避免把半截草稿一起发出去）、draft+new 走 uiWorkspace.startSession({prompt}) 只填草稿、auto+new 自己 sessions.create() 后 binding.session.prompt('queue') 并 openSession 跳转；当前会话拿不到输入面板时自动退回新会话。auto 命中黑名单（删除/重置/发布/push 等）自动降级成草稿。语音任务开启时唤醒不再打开 pet-chat（宿主不再广播 open 事件），听命令期间（/api/voice/listen 设置的时间窗）重复命中既不开对话也不做唤醒反应，避免朗读被麦克风录进命令。官方插件只是一个挂在 conversation.input.activity 的 React 组件，没有服务也没有快捷键，外部无法触发，因此本插件直接调用它背后的同一个宿主服务；服务缺失（未启用 voice-input bundle）时自动降级为只打开桌宠对话，并在设置页写明原因。识别结果不朗读、也不弹桌宠气泡（只有开始听命令时的「我在听」气泡），文字只出现在会话草稿/消息里。",
+    "config 结构兼容：dsh-pet 0.4.x 起 GET /config 变成扁平结构（pets 在顶层、voiceName 在顶层），更早的版本是按条目分组（main.pets / main.voiceName）。collectPetTargets() 两种都认（扁平优先，同一 id 去重），客户端读音色也用 root.main ?? root。只认旧结构时会一只宠物都发现不到，表现为「唤醒后有声音逻辑但没气泡、没联动动画」，同时也会把 voiceName 取成空串、朗读退回 dsh-pet 的配置默认值。",
+    "依赖：菜单功能只需要已安装的 dsh-pet；语音唤醒还需要可选的 sherpa-onnx-node；语音任务额外需要 DSH 官方语音输入插件（@deepseek-ai/dsh-experimental-voice-input-bundle，未启用则降级）；不修改 dsh-pet 源码与 DSH 内核。"
   ]
 }
